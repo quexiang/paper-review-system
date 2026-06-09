@@ -1,0 +1,20 @@
+# Dependencies
+node_modules/
+server/__pycache__/
+server/*.egg-info/
+
+# Environment
+.env
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+
+# Build output
+client/dist/
+
+# Temp
+/tmp/
