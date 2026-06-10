@@ -6,10 +6,29 @@ import type { CompletionReport, HistoryRecord } from './types';
 
 type Page = 'upload' | 'result' | 'history';
 
+interface ModelInfo {
+  name: string;
+  desc: string;
+}
+
 function App() {
   const [page, setPage] = useState<Page>('upload');
   const [report, setReport] = useState<CompletionReport | null>(null);
   const [history, setHistory] = useState<HistoryRecord[]>([]);
+  const [selectedModel, setSelectedModel] = useState<string>('');
+  const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
+
+  // 加载可用模型列表
+  React.useEffect(() => {
+    fetch('/api/models')
+      .then(r => r.json())
+      .then(data => {
+        setAvailableModels(data);
+        // 默认选中第一个
+        if (data.length > 0) setSelectedModel(data[0].name);
+      })
+      .catch(() => {});
+  }, []);
 
   const showResult = (r: CompletionReport) => {
     setReport(r);
@@ -18,7 +37,7 @@ function App() {
 
   const loadHistory = async () => {
     try {
-      const res = await fetch('http://localhost:8000/api/history');
+      const res = await fetch('/api/history');
       if (res.ok) {
         const data = await res.json();
         setHistory(data);
@@ -46,7 +65,14 @@ function App() {
       </header>
 
       <main className="main-content">
-        {page === 'upload' && <UploadPage onSubmitted={showResult} />}
+        {page === 'upload' && (
+          <UploadPage
+            onSubmitted={showResult}
+            selectedModel={selectedModel}
+            availableModels={availableModels}
+            onModelChange={setSelectedModel}
+          />
+        )}
         {page === 'result' && report && <ResultPage report={report} />}
         {page === 'history' && <HistoryPage records={history} />}
       </main>

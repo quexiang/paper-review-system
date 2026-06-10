@@ -10,7 +10,10 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import FastAPI, File, UploadFile
+from dotenv import load_dotenv
+load_dotenv()  # 加载 .env 文件，使 OPENAI_API_KEY 等环境变量生效
+
+from fastapi import FastAPI, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from openai import AsyncOpenAI
@@ -30,6 +33,66 @@ from parser import parse_text, detect_missing_sections
 from rule_engine.section_check import check_sections, analyze_section_balance
 from rule_engine.format_check import check_format
 from rule_engine.citation_check import check_citations
+
+# ── 已知模型列表（静态 + Ollama 发现）──────────────────────
+
+
+_KNOWN_MODELS: list[str] = [
+    "gpt-4o",
+    "gpt-4o-mini",
+    "claude-sonnet-4-20250514",
+    "claude-haiku-4-5-20250514",
+    "qwen3.6:latest",
+    "deepseek-r1:671b",
+    "llama3.3:70b",
+]
+
+def _discover_ollama_models() -> list[str]:
+    """从 Ollama 发现可用模型，与已知模型列表合并"""
+    import urllib.request
+    try:
+        resp = urllib.request.urlopen("http://localhost:11434/api/tags", timeout=2)
+        data = resp.read().decode("utf-8")
+        models = [m["name"] for m in json.loads(data).get("models", [])]
+        # 合并去重，Ollama 的模型排在前面（因为 .env 优先指向 Ollama）
+        seen: set[str] = set()
+        result: list[str] = []
+        for m in (models + _KNOWN_MODELS):
+            if m not in seen:
+                seen.add(m)
+                result.append(m)
+        return result
+    except Exception:
+        return list(_KNOWN_MODELS)
+
+def _get_available_models() -> list[dict]:
+    """返回可用模型列表，每条包含 name 和 description"""
+    descriptions = {
+        "gpt-4o": "GPT-4o（OpenAI，综合能力强）",
+        "gpt-4o-mini": "GPT-4o mini（轻量，速度快）",
+        "claude-sonnet-4-20250514": "Claude Sonnet 4（Anthropic，深度推理）",
+        "claude-haiku-4-5-20250514": "Claude Haiku 4（Anthropic，快速）",
+        "qwen3.6:latest": "Qwen 3.6（通义千问，本地部署）",
+        "deepseek-r1:671b": "DeepSeek R1 671B（深度推理）",
+        "llama3.3:70b": "Llama 3.3 70B（Meta，开源）",
+    }
+    models = _discover_ollama_models()
+    return [
+        {"name": m, "desc": descriptions.get(m, f"模型 {m}")}
+        for m in models
+    ]
+
+
+def _create_llm(model_name: str | None = None) -> AsyncOpenAI:
+    """根据模型名创建对应的 LLM 客户端"""
+    target_model = model_name or os.getenv("MODEL_NAME", "gpt-4o")
+    client = AsyncOpenAI(
+        api_key=os.getenv("OPENAI_API_KEY", ""),
+        base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+    )
+    client._model = target_model  # type: ignore
+    return client
+
 
 # ── 全局状态 ───────────────────────────────────────────
 
@@ -74,7 +137,7 @@ def _extract_docx_text(raw_bytes: bytes) -> str:
 
 # ── 审阅流程 ───────────────────────────────────────────
 
-async def run_review(parsed: ParsedDocument) -> CompletionReport:
+async def run_review(parsed: ParsedDocument, model_name: str | None = None) -> CompletionReport:
     """完整的审稿流程：规则检查 → AI 审阅 → 生成报告"""
     text = parsed.full_text
 
@@ -86,7 +149,8 @@ async def run_review(parsed: ParsedDocument) -> CompletionReport:
     rules.extend(check_citations(text))
 
     # 2. AI 审阅
-    llm = _get_llm()
+    llm = _create_llm(model_name)
+    target_model = getattr(llm, "_model", model_name or "gpt-4o")
     rule_lines = "\n".join(f"- [{r.severity.value}] {r.title}" for r in rules) or "无规则问题"
 
     prompt = (
@@ -101,8 +165,9 @@ async def run_review(parsed: ParsedDocument) -> CompletionReport:
         "}\n"
     )
     try:
+        model_to_use = getattr(llm, "_model", model_name or "gpt-4o")  # type: ignore
         resp = await llm.chat.completions.create(  # type: ignore
-            model=getattr(llm, "_model", "gpt-4o"),  # type: ignore
+            model=model_to_use,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.7,
             max_tokens=8000,
@@ -140,8 +205,20 @@ async def run_review(parsed: ParsedDocument) -> CompletionReport:
             "completions": completions_out,
         }
 
-    # 3. 组装报告
+    # 3. 组装报告（防御性解析：LLM 返回的数据可能包含非 dict 条目，需过滤）
     sm = parsed_json.get("summary", {})
+
+    def _safe_parse(items, cls):
+        """过滤非 dict 条目并安全实例化 Pydantic model"""
+        out = []
+        for r in (items or []):
+            if isinstance(r, dict):
+                try:
+                    out.append(cls(**r))
+                except Exception:
+                    pass  # 字段不完整则跳过
+        return out
+
     report = CompletionReport(
         file_name=parsed.file_name,
         status="completed",
@@ -152,9 +229,9 @@ async def run_review(parsed: ParsedDocument) -> CompletionReport:
             recommendation=str(sm.get("recommendation", "minor_revision")),
         ),
         rules=rules,
-        ai_reviews=[AIReviewItem(**r) for r in parsed_json.get("ai_reviews", [])],
-        revisions=[Revision(**r) for r in parsed_json.get("revisions", [])],
-        completions=[CompletionItem(**c) for c in parsed_json.get("completions", [])],
+        ai_reviews=_safe_parse(parsed_json.get("ai_reviews"), AIReviewItem),
+        revisions=_safe_parse(parsed_json.get("revisions"), Revision),
+        completions=_safe_parse(parsed_json.get("completions"), CompletionItem),
     )
 
     # 4. 记录历史
@@ -186,9 +263,15 @@ def health():
     return {"status": "ok", "service": "paper-review-system"}
 
 
+@app.get("/api/models")
+def list_models():
+    """列出可用大模型"""
+    return _get_available_models()
+
+
 @app.post("/api/review")
-async def review(file: UploadFile = File(...)):
-    """上传论文并执行审稿"""
+async def review(file: UploadFile = File(...), model: str | None = Form(default=None)):
+    """上传论文并执行审稿（可选指定 model）"""
     ext = Path(file.filename or "").suffix.lower()
     raw = await file.read()
 
@@ -207,7 +290,7 @@ async def review(file: UploadFile = File(...)):
         word_count=len(text.split()),
     )
 
-    report = await run_review(parsed)
+    report = await run_review(parsed, model_name=model)
     return report.model_dump()
 
 

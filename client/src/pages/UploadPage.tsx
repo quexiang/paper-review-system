@@ -2,13 +2,21 @@ import React, { useState, useRef, useCallback } from 'react';
 import type { CompletionReport } from '../types';
 import { useReview } from '../hooks/useReview';
 
+interface ModelInfo {
+  name: string;
+  desc: string;
+}
+
 interface UploadPageProps {
   onSubmitted: (report: CompletionReport) => void;
+  selectedModel: string;
+  availableModels: ModelInfo[];
+  onModelChange: (model: string) => void;
 }
 
 const SUPPORTED_TYPES = ['.pdf', '.docx', '.txt', '.md'];
 
-function UploadPage({ onSubmitted }: UploadPageProps) {
+function UploadPage({ onSubmitted, selectedModel, availableModels, onModelChange }: UploadPageProps) {
   const [file, setFile] = useState<File | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const { review, loading, error, progress } = useReview();
@@ -28,7 +36,7 @@ function UploadPage({ onSubmitted }: UploadPageProps) {
 
   const handleSubmit = async () => {
     if (!file) return;
-    const result = await review(file);
+    const result = await review(file, selectedModel);
     if (result) onSubmitted(result);
   };
 
@@ -62,6 +70,19 @@ function UploadPage({ onSubmitted }: UploadPageProps) {
       {/* 提交按钮 */}
       {file && (
         <div style={{ textAlign: 'center', marginTop: 24 }}>
+          {/* 模型选择器 */}
+          <label className="model-label">
+            🤖 大模型：<select
+              value={selectedModel}
+              onChange={(e) => onModelChange(e.target.value)}
+              className="model-select"
+            >
+              {availableModels.map(m => (
+                <option key={m.name} value={m.name}>{m.desc}</option>
+              ))}
+            </select>
+          </label>
+
           <button className="btn btn-primary" onClick={handleSubmit} disabled={!isSupported || loading}>
             {loading ? '⏳ 审稿中...' : '🔍 开始审阅'}
           </button>

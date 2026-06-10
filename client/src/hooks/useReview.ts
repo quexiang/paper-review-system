@@ -6,7 +6,7 @@ export function useReview() {
   const [error, setError] = useState('');
   const [progress, setProgress] = useState('');
 
-  const review = useCallback(async (file: File) => {
+  const review = useCallback(async (file: File, model?: string) => {
     setLoading(true);
     setError('');
     setProgress('正在解析论文内容...');
@@ -14,8 +14,9 @@ export function useReview() {
     try {
       const fd = new FormData();
       fd.append('file', file, file.name);
+      if (model) fd.append('model', model);
       setProgress('正在执行规则检查...');
-      const res = await fetch('http://localhost:8000/api/review', { method: 'POST', body: fd });
+      const res = await fetch('/api/review', { method: 'POST', body: fd });
       if (!res.ok) throw new Error(`审稿失败: ${res.status}`);
       setProgress('正在执行 AI 审阅...');
       const data: CompletionReport = await res.json();
