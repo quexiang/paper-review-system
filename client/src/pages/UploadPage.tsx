@@ -55,24 +55,24 @@ function UploadPage({ onSubmitted, selectedModel, availableModels, onModelChange
         onDrop={handleDrop}
         onClick={() => fileRef.current?.click()}
       >
-        <div className="upload-zone-icon">📄</div>
+        <span className="upload-zone-icon">📄</span>
         <h3>拖拽论文文件到此处，或点击选择</h3>
-        <p>支持格式：PDF / DOCX / TXT / MD</p>
+        <p>支持 PDF / DOCX / TXT / Markdown 格式</p>
         {file && (
-          <div style={{ marginTop: 16, padding: '8px 16px', background: '#eff6ff', borderRadius: 8, display: 'inline-block' }}>
-            <strong>{fileName}</strong> ({fileSize})
-            {!isSupported && <span style={{ color: 'var(--danger)', marginLeft: 8 }}>（不支持的格式）</span>}
+          <div className={`file-chip ${!isSupported ? 'unsupported' : ''}`}>
+            {isSupported ? '📎' : '⚠️'} {fileName} ({fileSize})
+            {!isSupported && ' — 不支持的格式'}
           </div>
         )}
         <input ref={fileRef} type="file" className="file-input" accept={SUPPORTED_TYPES.join(',')} onChange={handleSelect} />
       </div>
 
-      {/* 提交按钮 */}
+      {/* 提交区域 */}
       {file && (
-        <div style={{ textAlign: 'center', marginTop: 24 }}>
-          {/* 模型选择器 */}
-          <label className="model-label">
-            🤖 大模型：<select
+        <div className="submit-area">
+          <div className="model-selector">
+            <label>🤖 审稿模型</label>
+            <select
               value={selectedModel}
               onChange={(e) => onModelChange(e.target.value)}
               className="model-select"
@@ -81,7 +81,7 @@ function UploadPage({ onSubmitted, selectedModel, availableModels, onModelChange
                 <option key={m.name} value={m.name}>{m.desc}</option>
               ))}
             </select>
-          </label>
+          </div>
 
           <button className="btn btn-primary" onClick={handleSubmit} disabled={!isSupported || loading}>
             {loading ? '⏳ 审稿中...' : '🔍 开始审阅'}
@@ -91,30 +91,30 @@ function UploadPage({ onSubmitted, selectedModel, availableModels, onModelChange
 
       {/* 加载状态 */}
       {loading && (
-        <div style={{ marginTop: 32 }}>
-          <div className="loading-overlay">
-            <div className="spinner" />
-            <div className="loading-text">{progress}</div>
-          </div>
+        <div className="loading-overlay">
+          <div className="spinner" />
+          <div className="loading-text">{progress}</div>
         </div>
       )}
 
       {/* 错误信息 */}
       {error && (
-        <div className="card" style={{ background: '#fef2f2', border: '1px solid #fecaca' }}>
-          <div className="rule-title" style={{ color: 'var(--danger)' }}>❌ {error}</div>
+        <div className="card error-card" style={{ marginTop: 24 }}>
+          <div className="card-title" style={{ color: 'var(--danger)' }}>❌ 审稿失败</div>
+          <p style={{ fontSize: 14, color: 'var(--gray-700)' }}>{error}</p>
         </div>
       )}
 
       {/* 使用说明 */}
       {!loading && (
-        <div className="card" style={{ marginTop: 32, background: 'linear-gradient(135deg, #f0f9ff, #f0fdf4)' }}>
+        <div className="card guide-card" style={{ marginTop: 32 }}>
           <div className="card-title">📖 使用说明</div>
-          <div style={{ fontSize: 14, color: 'var(--gray-600)', lineHeight: 2 }}>
+          <div className="guide-list">
             <p><strong>1. 上传论文：</strong>支持 PDF、Word DOCX、TXT、Markdown 格式</p>
-            <p><strong>2. 规则检查：</strong>系统自动检测章节完整性、格式规范、引用匹配等</p>
-            <p><strong>3. AI 审阅：</strong>大模型对论文进行语义级深度审阅，提供修改建议</p>
-            <p><strong>4. 自动补全：</strong>对缺失章节生成内容草稿，以审阅模式展示</p>
+            <p><strong>2. 选择模型：</strong>挑选适合的大模型进行审稿，不同模型视角各异</p>
+            <p><strong>3. 规则检查：</strong>系统自动检测章节完整性、格式规范、引用匹配等</p>
+            <p><strong>4. AI 审阅：</strong>大模型对论文进行语义级深度审阅，提供修改建议</p>
+            <p><strong>5. 自动补全：</strong>对缺失章节生成内容草稿，以审阅模式展示</p>
           </div>
         </div>
       )}

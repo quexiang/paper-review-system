@@ -5,18 +5,18 @@ interface Props {
   records: HistoryRecord[];
 }
 
-function getRecBadge(rec: string): string {
-  const map: Record<string, string> = {
-    accept: 'badge-success', minor_revision: 'badge-warning', major_revision: 'badge-error', reject: 'badge-error'
-  };
-  return map[rec] || 'badge-info';
-}
+const REC_BADGE: Record<string, string> = {
+  accept: 'badge-success', minor_revision: 'badge-warning', major_revision: 'badge-error', reject: 'badge-error'
+};
 
-function getRecText(rec: string): string {
-  const map: Record<string, string> = {
-    accept: '接收', minor_revision: '小修', major_revision: '大修', reject: '拒稿'
-  };
-  return map[rec] || rec;
+const REC_TEXT: Record<string, string> = {
+  accept: '接收', minor_revision: '小修', major_revision: '大修', reject: '拒稿'
+};
+
+function scoreClass(score: number): string {
+  if (score >= 80) return 'score-high';
+  if (score >= 60) return 'score-mid';
+  return 'score-low';
 }
 
 function HistoryPage({ records }: Props) {
@@ -24,19 +24,24 @@ function HistoryPage({ records }: Props) {
     <div className="card">
       <div className="card-title">📋 审稿历史</div>
       {records.length === 0 ? (
-        <p style={{ color: 'var(--gray-600)' }}>暂无历史记录</p>
+        <div className="empty-state">
+          <div className="empty-state-icon">📋</div>
+          <p>暂无历史记录 — 提交论文审稿后将在这里显示</p>
+        </div>
       ) : (
-        records.map((r, i) => (
+        records.map((r) => (
           <div key={r.id} className="history-item">
             <div>
               <div className="history-file">{r.file_name}</div>
               <div className="history-time">{new Date(r.timestamp).toLocaleString('zh-CN')}</div>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              <span style={{ fontWeight: 700, fontSize: 20, color: r.summary.score >= 80 ? 'var(--success)' : r.summary.score >= 60 ? '#d97706' : 'var(--danger)' }}>
+            <div className="history-score-wrap">
+              <div className={`history-score ${scoreClass(r.summary.score)}`}>
                 {r.summary.score.toFixed(0)}
+              </div>
+              <span className={`badge ${REC_BADGE[r.summary.recommendation] ?? 'badge-info'}`}>
+                {REC_TEXT[r.summary.recommendation] ?? r.summary.recommendation}
               </span>
-              <span className={`badge ${getRecBadge(r.summary.recommendation)}`}>{getRecText(r.summary.recommendation)}</span>
             </div>
           </div>
         ))
