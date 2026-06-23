@@ -321,9 +321,13 @@ def _extract_pdf_text(raw_bytes: bytes) -> str:
     doc = pdfium.PdfDocument(raw_bytes)
     text_parts: list[str] = []
     for page in doc:
-        text = page.get_textb().decode("utf-8", errors="replace")
-        if text.strip():
-            text_parts.append(text)
+        # 兼容 pypdfium2 新旧版本：v3 用 get_textb()，v4+ 用 get_text()
+        if hasattr(page, 'get_textb'):
+            page_text = page.get_textb().decode("utf-8", errors="replace")
+        else:
+            page_text = page.get_text()
+        if page_text.strip():
+            text_parts.append(page_text)
     doc.close()
     return "\n".join(text_parts)
 
