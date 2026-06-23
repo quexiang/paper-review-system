@@ -42,10 +42,16 @@ _KNOWN_MODELS: list[str] = [
     "gpt-4o-mini",
     "claude-sonnet-4-20250514",
     "claude-haiku-4-5-20250514",
+    "claude-sonnet-4-5-20251001",          # 局域网部署
     "qwen3.6:latest",
     "deepseek-r1:671b",
     "llama3.3:70b",
 ]
+
+# 自定义模型端点（非默认 base_url 的模型）
+_CUSTOM_ENDPOINTS: dict[str, tuple[str, str]] = {
+    "claude-sonnet-4-5-20251001": ("http://59.79.241.152:7000", "sk-lan"),
+}
 
 def _discover_ollama_models() -> list[str]:
     """从 Ollama 发现可用模型，与已知模型列表合并"""
@@ -72,6 +78,7 @@ def _get_available_models() -> list[dict]:
         "gpt-4o-mini": "GPT-4o mini（轻量，速度快）",
         "claude-sonnet-4-20250514": "Claude Sonnet 4（Anthropic，深度推理）",
         "claude-haiku-4-5-20250514": "Claude Haiku 4（Anthropic，快速）",
+        "claude-sonnet-4-5-20251001": "Claude Sonnet 4.5（局域网部署，59.79.241.152）",
         "qwen3.6:latest": "Qwen 3.6（通义千问，本地部署）",
         "deepseek-r1:671b": "DeepSeek R1 671B（深度推理）",
         "llama3.3:70b": "Llama 3.3 70B（Meta，开源）",
@@ -84,8 +91,16 @@ def _get_available_models() -> list[dict]:
 
 
 def _create_llm(model_name: str | None = None) -> AsyncOpenAI:
-    """根据模型名创建对应的 LLM 客户端"""
+    """根据模型名创建对应的 LLM 客户端（支持自定义端点）"""
     target_model = model_name or os.getenv("MODEL_NAME", "gpt-4o")
+
+    # 自定义端点模型：使用独立 API 地址和 key
+    if target_model in _CUSTOM_ENDPOINTS:
+        endpoint, api_key = _CUSTOM_ENDPOINTS[target_model]
+        client = AsyncOpenAI(api_key=api_key, base_url=endpoint)
+        client._model = target_model  # type: ignore
+        return client
+
     client = AsyncOpenAI(
         api_key=os.getenv("OPENAI_API_KEY", ""),
         base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
