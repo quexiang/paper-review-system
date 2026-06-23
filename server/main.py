@@ -50,7 +50,7 @@ _KNOWN_MODELS: list[str] = [
 
 # 自定义模型端点（非默认 base_url 的模型）
 _CUSTOM_ENDPOINTS: dict[str, tuple[str, str]] = {
-    "claude-sonnet-4-5-20251001": ("http://59.79.241.152:7000", "sk-lan"),
+    "claude-sonnet-4-5-20251001": ("http://59.79.241.152:7000", "sk-litellmXa304304"),
 }
 
 def _discover_ollama_models() -> list[str]:

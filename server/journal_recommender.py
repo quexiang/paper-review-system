@@ -236,7 +236,17 @@ def recommend_journals(
         matched_scope = [s for s in j["scope"] if s.lower() in tl]
 
         if matched_scope:
-            reason = f"论文涉及{matched_scope[0]}领域，与{j['name'].split("(")[0].strip()}的征稿方向直接契合。" + (f" 期刊级别 {j['level']}，与稿件质量水平（{overall_score:.0f}分）" + ("高度" if overall_score >= 75 else "较为" if overall_score >= 55 else "基本") + "匹配。" if overall_score else "。")
+            short_name = j['name'].split('(')[0].strip()
+            level_phrase = ""
+            if overall_score:
+                if overall_score >= 75:
+                    adj = "高度"
+                elif overall_score >= 55:
+                    adj = "较为"
+                else:
+                    adj = "基本"
+                level_phrase = f" 期刊级别 {j['level']}，与稿件质量水平（{overall_score:.0f}分）{adj}匹配。"
+            reason = f"论文涉及{matched_scope[0]}领域，与{short_name}的征稿方向直接契合。{level_phrase}"
         else:
             reason = j["desc"]
 
