@@ -317,15 +317,26 @@ def _build_docx(report: CompletionReport, original_text: str, journals: list[dic
 # ── PDF 解析 ───────────────────────────────────────────
 
 def _extract_pdf_text(raw_bytes: bytes) -> str:
-    """用 pypdfium2 从 PDF 提取纯文本"""
+    """用 pypdfium2 从 PDF 提取纯文本（兼容 v3/v4/v5）"""
     doc = pdfium.PdfDocument(raw_bytes)
     text_parts: list[str] = []
     for page in doc:
-        # 兼容 pypdfium2 新旧版本：v3 用 get_textb()，v4+ 用 get_text()
-        if hasattr(page, 'get_textb'):
-            page_text = page.get_textb().decode("utf-8", errors="replace")
-        else:
-            page_text = page.get_text()
+        # 兼容 pypdfium2 各版本 API 差异
+        page_text = ""
+        try:
+            # v5+: get_textpage() → get_text_range()
+            textpage = page.get_textpage()
+            n_chars = textpage.count_chars()
+            if n_chars > 0:
+                page_text = textpage.get_text_range(index=0, count=n_chars)
+            textpage.close()
+        except AttributeError:
+            try:
+                # v4: get_text() → str
+                page_text = page.get_text()
+            except AttributeError:
+                # v3: get_textb() → bytes
+                page_text = page.get_textb().decode("utf-8", errors="replace")
         if page_text.strip():
             text_parts.append(page_text)
     doc.close()
