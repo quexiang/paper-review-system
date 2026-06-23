@@ -29,7 +29,7 @@ from models import (
     Revision,
     RuleReport,
 )
-from parser import parse_text, detect_missing_sections
+from parser import parse_text, detect_missing_sections, extract_sections
 from rule_engine.section_check import check_sections, analyze_section_balance
 from rule_engine.format_check import check_format
 from rule_engine.citation_check import check_citations
@@ -38,19 +38,19 @@ from rule_engine.citation_check import check_citations
 
 
 _KNOWN_MODELS: list[str] = [
-    "gpt-4o",
-    "gpt-4o-mini",
-    "claude-sonnet-4-20250514",
-    "claude-haiku-4-5-20250514",
-    "claude-sonnet-4-5-20251001",          # 局域网部署
-    "qwen3.6:latest",
-    "deepseek-r1:671b",
-    "llama3.3:70b",
+    "claude-sonnet-4-5-20251001",
+    "claude-opus-4-5-20251001",
+    "claude-haiku-4-5-20251001",
 ]
 
 # 自定义模型端点（非默认 base_url 的模型）
+# API key 优先从环境变量 LAN_MODEL_API_KEY 读取
+_LAN_KEY = os.getenv("LAN_MODEL_API_KEY", "sk-litellmXa304304")
+_LAN_URL = "http://59.79.241.152:7000/v1"
 _CUSTOM_ENDPOINTS: dict[str, tuple[str, str]] = {
-    "claude-sonnet-4-5-20251001": ("http://59.79.241.152:7000", "sk-litellmXa304304"),
+    "claude-sonnet-4-5-20251001": (_LAN_URL, _LAN_KEY),
+    "claude-opus-4-5-20251001":   (_LAN_URL, _LAN_KEY),
+    "claude-haiku-4-5-20251001":  (_LAN_URL, _LAN_KEY),
 }
 
 def _discover_ollama_models() -> list[str]:
@@ -60,7 +60,6 @@ def _discover_ollama_models() -> list[str]:
         resp = urllib.request.urlopen("http://localhost:11434/api/tags", timeout=2)
         data = resp.read().decode("utf-8")
         models = [m["name"] for m in json.loads(data).get("models", [])]
-        # 合并去重，Ollama 的模型排在前面（因为 .env 优先指向 Ollama）
         seen: set[str] = set()
         result: list[str] = []
         for m in (models + _KNOWN_MODELS):
@@ -74,14 +73,9 @@ def _discover_ollama_models() -> list[str]:
 def _get_available_models() -> list[dict]:
     """返回可用模型列表，每条包含 name 和 description"""
     descriptions = {
-        "gpt-4o": "GPT-4o（OpenAI，综合能力强）",
-        "gpt-4o-mini": "GPT-4o mini（轻量，速度快）",
-        "claude-sonnet-4-20250514": "Claude Sonnet 4（Anthropic，深度推理）",
-        "claude-haiku-4-5-20250514": "Claude Haiku 4（Anthropic，快速）",
-        "claude-sonnet-4-5-20251001": "Claude Sonnet 4.5（局域网部署，59.79.241.152）",
-        "qwen3.6:latest": "Qwen 3.6（通义千问，本地部署）",
-        "deepseek-r1:671b": "DeepSeek R1 671B（深度推理）",
-        "llama3.3:70b": "Llama 3.3 70B（Meta，开源）",
+        "claude-sonnet-4-5-20251001": "Claude Sonnet 4.5（局域网，深度推理）",
+        "claude-opus-4-5-20251001":   "Claude Opus 4.5（局域网，最强推理）",
+        "claude-haiku-4-5-20251001":  "Claude Haiku 4.5（局域网，极速响应）",
     }
     models = _discover_ollama_models()
     return [
@@ -362,7 +356,7 @@ async def run_review(parsed: ParsedDocument, model_name: str | None = None) -> C
     # 1. 规则检查
     rules: list[RuleReport] = []
     rules.extend(check_sections(text))
-    rules.extend(analyze_section_balance(parsed.sections))
+    rules.extend(analyze_section_balance([s.model_dump() for s in parsed.sections]))
     rules.extend(check_format(text))
     rules.extend(check_citations(text))
 
@@ -436,6 +430,7 @@ async def run_review(parsed: ParsedDocument, model_name: str | None = None) -> C
         "必须考虑论文质量水平与期刊级别的匹配——高创新高分的推荐顶会/顶刊，中等水平的推荐合适级别的期刊。\n"
         "每条推荐理由必须具体说明该期刊为什么适合本文，不能泛泛而谈。不要返回空数组！\n"
     )
+    raw = "{}"
     try:
         model_to_use = getattr(llm, "_model", model_name or "gpt-4o")  # type: ignore
         resp = await llm.chat.completions.create(  # type: ignore
@@ -445,12 +440,32 @@ async def run_review(parsed: ParsedDocument, model_name: str | None = None) -> C
             max_tokens=8000,
         )
         raw = resp.choices[0].message.content or "{}"
-        # 尝试从 markdown 代码块中提取 JSON
         import re as _re
+        # 去除 vLLM Claude thinking 块：</think> 之后才是实际 JSON
+        _think_end = raw.find('</think>')
+        if _think_end >= 0:
+            raw = raw[_think_end + len('</think>'):].strip()
+        # 去除 thinking 前缀（无闭合标签的情况）
+        _think_match = _re.search(r'(Here\'s a thinking process:).*?\n\n', raw, _re.DOTALL | _re.IGNORECASE)
+        if _think_match:
+            raw = raw[_think_match.end():].strip()
+        # 尝试从 markdown 代码块中提取 JSON
         m = _re.search(r'```(?:json)?\s*\n(.*?)\n```', raw, _re.DOTALL)
-        parsed_json = json.loads(m.group(1)) if m else json.loads(raw)
-    except Exception:
-        # LLM 调用失败时：基于规则生成完整的默认结果
+        if m:
+            parsed_json = json.loads(m.group(1))
+        else:
+            # 从混杂文本中提取 JSON（找最外层 {}）
+            _brace_start = raw.find('{')
+            _brace_end = raw.rfind('}')
+            if _brace_start >= 0 and _brace_end > _brace_start:
+                raw = raw[_brace_start:_brace_end + 1]
+            parsed_json = json.loads(raw)
+    except Exception as e:
+        # LLM 调用/解析失败时：基于规则生成默认结果
+        import sys as _sys, traceback as _tb
+        print(f"[WARN] LLM failed: {e}", file=_sys.stderr)
+        if raw and raw != "{}":
+            print(f"[WARN] Raw response (first 500 chars): {raw[:500]}", file=_sys.stderr)
         missing = detect_missing_sections(text)
         parsed_json = {
             "summary": {
@@ -587,10 +602,15 @@ async def review(file: UploadFile = File(...), model: str | None = Form(default=
     else:
         return JSONResponse(status_code=400, content={"error": f"不支持的格式：{ext}。支持 .pdf / .docx / .txt / .md"})
 
+    # 中文字数更合理（英文用单词数，中文用字符数/2 估算）
+    _wc = len(text.split())
+    if _wc < 200 and len(text) > 200:  # 中文文章 split 词数极少
+        _wc = len(text.replace('\n', '').replace(' ', ''))
     parsed = ParsedDocument(
         file_name=file.filename or "unknown",
+        sections=extract_sections(text),
         full_text=text,
-        word_count=len(text.split()),
+        word_count=max(_wc, 1),
     )
 
     report = await run_review(parsed, model_name=model)

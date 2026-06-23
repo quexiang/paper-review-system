@@ -32,6 +32,21 @@ def extract_sections(text: str) -> list[SectionInfo]:
     sections: list[dict] = []
     current: Optional[dict] = None
 
+    # 学术论文章节关键词（无论有无编号，这些开头的行都应识别为章节标题）
+    SECTION_KEYWORDS = [
+        "摘要", "abstract",
+        "引言", "绪论", "introduction",
+        "相关", "related", "literature review", "文献综述",
+        "背景", "background",
+        "方法", "method", "methodology", "研究方法",
+        "实验", "experiment", "results", "结果",
+        "讨论", "discussion",
+        "结论", "conclusion", "总结",
+        "参考", "reference", "参考文献",
+        "致谢", "acknowledgment",
+        "附录", "appendix",
+    ]
+
     for idx, line in enumerate(lines):
         stripped = line.strip()
         if not stripped:
@@ -39,12 +54,26 @@ def extract_sections(text: str) -> list[SectionInfo]:
 
         # 检测 ATX style 标题 (## Header)
         level_match = re.match(r"^(#{1,3})\s+(.+)$", stripped)
-        if level_match and len(level_match.group(1)) <= 2:
+        if level_match:
             if current:
                 sections.append(current)
             current = {
                 "title": level_match.group(2).strip(),
                 "level": min(len(level_match.group(1)), 3),
+                "content": "",
+                "start_offset": sum(len(l) + 1 for l in lines[:idx]),
+            }
+            continue
+
+        # 检测数字编号标题 (1 / 1.1 / 1.1.1 等)
+        num_match = re.match(r"^(\d+(?:\.\d+)*)\s+(.+)$", stripped)
+        if num_match:
+            level = len(num_match.group(1).split("."))
+            if current:
+                sections.append(current)
+            current = {
+                "title": stripped,
+                "level": min(level, 3),
                 "content": "",
                 "start_offset": sum(len(l) + 1 for l in lines[:idx]),
             }
@@ -63,6 +92,21 @@ def extract_sections(text: str) -> list[SectionInfo]:
                 "start_offset": sum(len(l) + 1 for l in lines[:idx]),
             }
             continue
+
+        # 检测学术关键词开头的行（无编号但内容为章节标题）
+        kw_lower = stripped.lower()
+        if any(kw_lower.startswith(kw) for kw in SECTION_KEYWORDS):
+            # 确保是独立行（不太长，给可能是标题的行）
+            if len(stripped) <= 60:
+                if current:
+                    sections.append(current)
+                current = {
+                    "title": stripped,
+                    "level": 1,
+                    "content": "",
+                    "start_offset": sum(len(l) + 1 for l in lines[:idx]),
+                }
+                continue
 
         # 累积内容
         if current is not None:
