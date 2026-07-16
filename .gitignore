@@ -3,6 +3,10 @@ node_modules/
 server/__pycache__/
 server/*.egg-info/
 
+# Python bytecode
+__pycache__/
+*.pyc
+
 # Environment
 .env
 

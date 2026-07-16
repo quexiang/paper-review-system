@@ -119,6 +119,24 @@ class ReviewRequest(BaseModel):
     metadata: dict[str, Any] = {}
 
 
+class CoherenceIssue(BaseModel):
+    """逻辑不连贯问题"""
+    location: str              # 位置描述（章节名+段落位置）
+    issue_type: str            # "section_logic" | "argument_logic" | "sentence_coherence" | "theme_mismatch"
+    description: str           # 问题描述
+    severity: str              # "error" | "warning" | "info"
+    suggestion: Optional[str] = None  # 修改建议
+
+
+class LogicalReview(BaseModel):
+    """逻辑连贯性审查结果"""
+    section_logic: list[str]                       # 章节/段落主题逻辑性审查意见
+    argument_logic: list[str]                      # 论点论据逻辑性审查意见
+    coherence_issues: list[CoherenceIssue] = []    # 检测到的逻辑不通顺问题
+    theme_consistency: list[str]                   # 与段落主题、论文主题一致性评价
+    overall_assessment: str = ""                   # 总体逻辑性评价
+
+
 class CompletionReport(BaseModel):
     """审稿完成后的完整报告"""
     id: str = Field(default_factory=lambda: str(uuid.uuid4())[:8])
@@ -130,6 +148,7 @@ class CompletionReport(BaseModel):
     ai_reviews: list[AIReviewItem] = []
     revisions: list[Revision] = []
     completions: list[CompletionItem] = []
+    logical_review: Optional[LogicalReview] = None  # 逻辑连贯性审查结果
 
 
 # ── 历史记录 ──────────────────────────────────────────────

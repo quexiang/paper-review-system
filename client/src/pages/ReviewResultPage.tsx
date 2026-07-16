@@ -37,6 +37,21 @@ const REV_EMOJI: Record<string, string> = {
   insertion: '➕ 新增', deletion: '❌ 删除', modification: '🔄 修改'
 };
 
+const ISSUE_SEV_CLASS: Record<string, string> = {
+  error: 'rule-error', warning: 'rule-warning', info: 'rule-info'
+};
+
+const ISSUE_SEV_LABEL: Record<string, string> = {
+  error: '❌ 严重', warning: '⚠️ 一般', info: 'ℹ️ 提示'
+};
+
+const ISSUE_TYPE_LABEL: Record<string, string> = {
+  section_logic: '章节逻辑',
+  argument_logic: '论点论据逻辑',
+  sentence_coherence: '语句连贯性',
+  theme_mismatch: '主题不符'
+};
+
 interface JournalRec {
   name: string;
   level: string;
@@ -101,12 +116,13 @@ function ReviewResultPage({ report }: Props) {
   };
 
   const tabs = [
-    { label: '📊 总评',        key: 'summary',    count: 0 },
-    { label: '📋 规则检查',   key: 'rules',      count: report.rules.length },
-    { label: '🤖 AI 审阅',    key: 'ai',          count: report.ai_reviews.length },
-    { label: '✍️ 修订痕迹',  key: 'revisions',   count: report.revisions.length },
-    { label: '📝 自动补全',   key: 'completions', count: report.completions.length },
-    { label: '📚 推荐期刊',   key: 'journals',    count: journals.length },
+    { label: '📊 总评',          key: 'summary',     count: 0 },
+    { label: '📋 规则检查',      key: 'rules',       count: report.rules.length },
+    { label: '🔍 逻辑审查',      key: 'logical',     count: report.logical_review?.coherence_issues.length ?? 0 },
+    { label: '🤖 AI 审阅',      key: 'ai',          count: report.ai_reviews.length },
+    { label: '✍️ 修订痕迹',     key: 'revisions',   count: report.revisions.length },
+    { label: '📝 自动补全',     key: 'completions', count: report.completions.length },
+    { label: '📚 推荐期刊',      key: 'journals',    count: journals.length },
   ];
 
   return (
@@ -130,8 +146,9 @@ function ReviewResultPage({ report }: Props) {
           <h3>{report.file_name}</h3>
           <p className="meta-info">
             <span>{new Date(report.timestamp).toLocaleString('zh-CN')}</span>
-            <span>{report.rules.length} 条检查</span>
-            <span>{report.ai_reviews.length} 条审阅</span>
+            <span>{report.rules.length} 条规则检查</span>
+            <span>{report.logical_review?.coherence_issues.length ?? 0} 条逻辑问题</span>
+            <span>{report.ai_reviews.length} 条 AI 审阅</span>
           </p>
           <span className={`recommendation-badge ${REC_CLASS[report.summary.recommendation] ?? ''}`}>
             {REC_TEXT[report.summary.recommendation] ?? report.summary.recommendation}
@@ -221,8 +238,89 @@ function ReviewResultPage({ report }: Props) {
         </div>
       )}
 
-      {/* ── Tab 2: AI 审阅 ─────────────────────────── */}
+      {/* ── Tab 2: 逻辑连贯性审查 ─────────────────── */}
       {activeTab === 2 && (
+        <div className="card">
+          <div className="card-title">🔍 逻辑连贯性审查</div>
+          {!report.logical_review ? (
+            <div className="empty-state">
+              <div className="empty-state-icon">🔍</div>
+              <p>暂无逻辑审查结果 — 可能是 LLM 未能生成逻辑连贯性审查</p>
+            </div>
+          ) : (
+            <>
+              {/* 总体评价 */}
+              {report.logical_review.overall_assessment && (
+                <div className="card" style={{ marginBottom: 16 }}>
+                  <div className="card-title">总体评价</div>
+                  <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.8 }}>{report.logical_review.overall_assessment}</div>
+                </div>
+              )}
+
+              {/* 章节与段落逻辑 */}
+              {report.logical_review.section_logic.length > 0 && (
+                <div className="card" style={{ marginBottom: 16 }}>
+                  <div className="card-title">📑 章节与段落逻辑</div>
+                  {report.logical_review.section_logic.map((s, i) => (
+                    <div key={i} className="list-item" style={{ whiteSpace: 'pre-wrap', lineHeight: 1.8 }}>{s}</div>
+                  ))}
+                </div>
+              )}
+
+              {/* 论点与论据逻辑 */}
+              {report.logical_review.argument_logic.length > 0 && (
+                <div className="card" style={{ marginBottom: 16 }}>
+                  <div className="card-title">⚖️ 论点与论据逻辑</div>
+                  {report.logical_review.argument_logic.map((a, i) => (
+                    <div key={i} className="list-item" style={{ whiteSpace: 'pre-wrap', lineHeight: 1.8 }}>{a}</div>
+                  ))}
+                </div>
+              )}
+
+              {/* 逻辑问题检测 */}
+              {report.logical_review.coherence_issues.length > 0 && (
+                <div className="card" style={{ marginBottom: 16 }}>
+                  <div className="card-title">⚠️ 检测到的逻辑问题</div>
+                  {report.logical_review.coherence_issues.map((ci, i) => (
+                    <div key={i} className={`rule-item ${ISSUE_SEV_CLASS[ci.severity] ?? 'rule-info'}`}>
+                      <div className="rule-title">
+                        <span className={`badge ${BADGE_CLASS[ci.severity] ?? 'badge-info'}`}>{ISSUE_SEV_LABEL[ci.severity] ?? ci.severity}</span>
+                        {' '}{ISSUE_TYPE_LABEL[ci.issue_type] ?? ci.issue_type}
+                        {ci.location && <><span className="rev-location">📍{ci.location}</span></>}
+                      </div>
+                      <div className="rule-desc">{ci.description}</div>
+                      {ci.suggestion && <div className="rule-suggestion">💡 {ci.suggestion}</div>}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* 主题一致性 */}
+              {report.logical_review.theme_consistency.length > 0 && (
+                <div className="card" style={{ marginBottom: 16 }}>
+                  <div className="card-title">🎯 主题一致性评价</div>
+                  {report.logical_review.theme_consistency.map((t, i) => (
+                    <div key={i} className="list-item" style={{ whiteSpace: 'pre-wrap', lineHeight: 1.8 }}>{t}</div>
+                  ))}
+                </div>
+              )}
+
+              {report.logical_review.overall_assessment === '' &&
+               report.logical_review.section_logic.length === 0 &&
+               report.logical_review.argument_logic.length === 0 &&
+               report.logical_review.coherence_issues.length === 0 &&
+               report.logical_review.theme_consistency.length === 0 && (
+                <div className="empty-state">
+                  <p>逻辑连贯性审查已生成，但未发现具体问题</p>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ── Tab 3: AI 审阅 ─────────────────────────── */}
+      {activeTab === 3 && (
         <div className="card">
           <div className="card-title">🤖 AI 审阅意见</div>
           {report.ai_reviews.length === 0 ? (
@@ -252,8 +350,8 @@ function ReviewResultPage({ report }: Props) {
         </div>
       )}
 
-      {/* ── Tab 3: 修订痕迹 ────────────────────────── */}
-      {activeTab === 3 && (
+      {/* ── Tab 4: 修订痕迹 ────────────────────────── */}
+      {activeTab === 4 && (
         <div className="card">
           <div className="card-title">✍️ 修订痕迹</div>
           {report.revisions.length === 0 ? (
@@ -278,8 +376,8 @@ function ReviewResultPage({ report }: Props) {
         </div>
       )}
 
-      {/* ── Tab 4: 自动补全 ────────────────────────── */}
-      {activeTab === 4 && (
+      {/* ── Tab 5: 自动补全 ────────────────────────── */}
+      {activeTab === 5 && (
         <div className="card">
           <div className="card-title">📝 自动补全内容</div>
           {report.completions.length === 0 ? (
@@ -309,8 +407,8 @@ function ReviewResultPage({ report }: Props) {
         </div>
       )}
 
-      {/* ── Tab 5: 推荐期刊 ────────────────────────── */}
-      {activeTab === 5 && (
+      {/* ── Tab 6: 推荐期刊 ────────────────────────── */}
+      {activeTab === 6 && (
         <div className="card">
           <div className="card-title">📚 推荐投稿期刊（Top 10）</div>
           {journalsLoading ? (

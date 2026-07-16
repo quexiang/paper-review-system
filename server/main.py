@@ -24,6 +24,8 @@ from models import (
     CompletionReport,
     CompletionItem,
     HistoryRecord,
+    LogicalReview,
+    CoherenceIssue,
     ParsedDocument,
     ReviewSummary,
     Revision,
@@ -189,8 +191,51 @@ def _build_docx(report: CompletionReport, original_text: str, journals: list[dic
 
     doc.add_page_break()
 
+    # ── 逻辑连贯性审查 ────────────────────────────
+    doc.add_heading('三、逻辑连贯性审查', level=1)
+    if report.logical_review:
+        # 总体评价
+        if report.logical_review.overall_assessment:
+            doc.add_heading('总体评价', level=2)
+            doc.add_paragraph(report.logical_review.overall_assessment)
+
+        # 章节/段落逻辑
+        if report.logical_review.section_logic:
+            doc.add_heading('章节与段落逻辑', level=2)
+            for item in report.logical_review.section_logic:
+                doc.add_paragraph(item, style='List Bullet')
+
+        # 论点论据逻辑
+        if report.logical_review.argument_logic:
+            doc.add_heading('论点与论据逻辑', level=2)
+            for item in report.logical_review.argument_logic:
+                doc.add_paragraph(item, style='List Bullet')
+
+        # 逻辑问题检测
+        if report.logical_review.coherence_issues:
+            doc.add_heading('检测到的逻辑问题', level=2)
+            sev_label = {"error": "❌ 严重", "warning": "⚠️ 一般", "info": "ℹ️ 提示"}
+            for i, ci in enumerate(report.logical_review.coherence_issues, 1):
+                doc.add_heading(f'{i}. {sev_label.get(ci.severity, ci.severity)} — {ci.issue_type}', level=3)
+                doc.add_paragraph(f'位置：{ci.location}')
+                doc.add_paragraph(ci.description)
+                if ci.suggestion:
+                    p = doc.add_paragraph()
+                    run = p.add_run(f'💡 建议：{ci.suggestion}')
+                    run.font.italic = True
+
+        # 主题一致性
+        if report.logical_review.theme_consistency:
+            doc.add_heading('主题一致性评价', level=2)
+            for item in report.logical_review.theme_consistency:
+                doc.add_paragraph(item, style='List Bullet')
+    else:
+        doc.add_paragraph('暂无逻辑连贯性审查结果。')
+
+    doc.add_page_break()
+
     # ── AI 审阅意见 ────────────────────────────────
-    doc.add_heading('三、AI 审阅意见', level=1)
+    doc.add_heading('四、AI 审阅意见', level=1)
     if report.ai_reviews:
         for i, r in enumerate(report.ai_reviews, 1):
             doc.add_heading(f'{i}. {r.section}', level=2)
@@ -206,7 +251,7 @@ def _build_docx(report: CompletionReport, original_text: str, journals: list[dic
     doc.add_page_break()
 
     # ── 修订痕迹 ────────────────────────────────────
-    doc.add_heading('四、修订痕迹（修改前后对比）', level=1)
+    doc.add_heading('五、修订痕迹（修改前后对比）', level=1)
     if report.revisions:
         for i, r in enumerate(report.revisions, 1):
             rev_emoji = {"insertion": "➕ 新增", "deletion": "❌ 删除", "modification": "🔄 修改"}
@@ -242,7 +287,7 @@ def _build_docx(report: CompletionReport, original_text: str, journals: list[dic
     doc.add_page_break()
 
     # ── 自动补全 ────────────────────────────────────
-    doc.add_heading('五、自动补全内容', level=1)
+    doc.add_heading('六、自动补全内容', level=1)
     if report.completions:
         for i, c in enumerate(report.completions, 1):
             doc.add_heading(f'{i}. {c.section}（置信度 {c.confidence:.0%}）', level=2)
@@ -253,7 +298,7 @@ def _build_docx(report: CompletionReport, original_text: str, journals: list[dic
     doc.add_page_break()
 
     # ── 推荐期刊 Top 5 ───────────────────────────────
-    doc.add_heading('六、推荐期刊（Top 10）', level=1)
+    doc.add_heading('七、推荐期刊（Top 10）', level=1)
 
     score = report.summary.overall_score
 
@@ -384,14 +429,19 @@ async def run_review(parsed: ParsedDocument, model_name: str | None = None) -> C
             completions.append({
                 "section": m,
                 "generated_content": (
-                    f"【{m}章节 — 系统自动生成草稿】\n\n"
-                    f"该章节在提交稿件中缺失。建议作者在此处补充以下内容：\n\n"
-                    f"1. 关于「{m}」的核心概念与背景介绍\n"
-                    f"2. 与论文研究主题直接相关的关键论述\n"
-                    f"3. 支撑该章节论证的数据、引用或案例\n\n"
-                    f"请根据论文的实际研究方向，撰写符合学术规范的「{m}」章节内容。"
+                    f"【章节定位】\n"
+                    f"「{m}」是学术论文中的关键组成部分，对于完整呈现研究工作、"
+                    f"说服审稿人和读者具有重要作用。该章节在提交稿件中缺失，需要补充。\n\n"
+                    f"【核心要点】\n"
+                    f"该章节应涵盖以下内容：\n"
+                    f"1. 与「{m}」相关的核心概念和背景知识\n"
+                    f"2. 紧密结合论文已有研究内容的深入分析和讨论\n"
+                    f"3. 支撑论文结论的关键论据、数据或引用\n\n"
+                    f"【草稿正文】\n"
+                    f"（请作者根据论文的具体研究内容、方法和数据进行撰写，"
+                    f"确保与全文在逻辑上和风格上保持一致。）"
                 ),
-                "confidence": 0.35,
+                "confidence": 0.30,
             })
         return completions
 
@@ -402,30 +452,81 @@ async def run_review(parsed: ParsedDocument, model_name: str | None = None) -> C
         score = summary.get("overall_score", 60)
         return _recommend_journals(text, overall_score=float(score))
 
-    # 2. AI 审阅（强化版 prompt：明确要求 revisions + completions）
+    # 2. AI 审阅 prompt
     llm = _create_llm(model_name)
     rule_lines = "\n".join(f"- [{r.severity.value}] {r.title}" for r in rules) or "无规则问题"
 
+    # 将论文的章节列表告诉 LLM，帮助它定位
+    section_titles = [s.title for s in parsed.sections] if parsed.sections else ["（未识别到章节）"]
+
     prompt = (
-        f"你是一位资深的学术期刊审稿人。请对以下论文进行严格审阅，并返回纯 JSON（不要使用代码块）。\n\n"
+        f"你是一位资深的学术期刊审稿人，擅长全面、深入地评审学术论文。请对以下论文进行详尽的审阅，"
+        f"返回尽可能全面、完整的审阅结果（纯 JSON，不要使用代码块）。\n\n"
         f"## 规则检查结果\n{rule_lines}\n\n"
-        f"## 论文全文（前15000字）\n{text[:15000]}\n\n"
+        f"## 论文全文（前20000字）\n{text[:20000]}\n\n"
         "## 重要要求\n"
-        "你必须返回一个完整的 JSON 对象，包含以下全部字段，任何字段都不能为空：\n\n"
+        "你必须返回一个完整的 JSON 对象，包含以下全部字段。每项内容都必须**详尽、具体、有深度**，"
+        "不能敷衍了事或泛泛而谈。\n\n"
         "### summary - 总体评价\n"
-        "{\"overall_score\": 0-100 整数, \"strengths\": [\"优点\"], \"weaknesses\": [\"缺点\"], "
-        "\"recommendation\": \"accept|minor_revision|major_revision|reject\"}\n\n"
-        "### ai_reviews - 逐章节 AI 审阅意见（至少 2 条）\n"
-        "[{\"section\": \"章节名\", \"review_comment\": \"详细审阅意见\", \"original_text\": \"原文关键片段（可选）\", "
-        "\"suggestion\": \"具体修改建议\"}]\n\n"
-        "### revisions - 修订痕迹（至少 3 条，每条包含以下全部字段）\n"
-        "[{\"revision_type\": \"insertion|deletion|modification\", \"original_text\": \"被修改的原文（删除/修改时必填，insertion 时可为空）\", "
-        "\"new_text\": \"修改后的文本\", \"location\": \"章节名 + 段落位置\", \"rationale\": \"修改理由\"}]\n\n"
-        "### completions - 自动补全内容（如果规则检查或论文中有缺失章节，必须为每个缺失章节生成一条补全）\n"
-        "[{\"section\": \"缺失章节名\", \"generated_content\": \"AI 生成的补充内容草稿（至少 100 字）\", \"confidence\": 0.5-0.9 的浮点数}]\n\n"
-        "### journals - 推荐期刊 Top 10（根据论文创新性、内容主题严格匹配，至少 10 条）\n"
+        "{\"overall_score\": 0-100 整数, \"strengths\": [\"优点1\", \"优点2\", ...], \"weaknesses\": [\"缺点1\", \"缺点2\", ...], "
+        "\"recommendation\": \"accept|minor_revision|major_revision|reject\"}\n"
+        "要求：strengths 至少 4 条，weaknesses 至少 4 条，每条都要具体针对论文内容，不能泛泛而谈（如“创新性强”应具体说明哪个创新点）。\n\n"
+        "### ai_reviews - 逐章节 AI 审阅意见\n"
+        "要求：\n"
+        "1. 为论文中的**每一个章节**都生成审阅意见，包括摘要、引言、方法、实验、结论等\n"
+        "2. 每条 review_comment 必须**至少 300 个字**，建议按以下结构撰写：\n"
+        "   ①【内容质量】该章节的内容是否充实、准确，核心论点是否清晰\n"
+        "   ②【写作水平】表达是否清晰、专业，逻辑是否连贯\n"
+        "   ③【具体问题】指出该章节中存在的具体问题（如有），引用原文片段佐证\n"
+        "   ④【优点亮点】该章节做得好的地方\n"
+        "3. 每条 suggestion 必须**至少 100 个字**，给出可操作的具体修改方案\n"
+        "4. original_text 字段应截取原文中你正在评述的关键片段（50-200字），用于佐证你的观点\n"
+        "5. 格式：\n"
+        "[{\"section\": \"章节名\", \"review_comment\": \"按上述结构撰写的详尽审阅意见（≥300字）\", "
+        "\"original_text\": \"原文关键片段（可选）\", \"suggestion\": \"具体的可操作的修改建议（≥100字）\"}]\n\n"
+        "### revisions - 修订痕迹\n"
+        "[{\"revision_type\": \"insertion|deletion|modification\", \"original_text\": \"被修改的原文（删除/修改时必填）\", "
+        "\"new_text\": \"修改后的完整文本\", \"location\": \"章节名 + 段落位置\", \"rationale\": \"详细修改理由\"}]\n"
+        "要求：至少 8 条，覆盖论文中各个章节需要改进的地方。每条的修改理由要充分说明为什么这样改更好。\n\n"
+        "### completions - 自动补全内容\n"
+        "要求：\n"
+        "1. 如果论文缺少某些关键章节（如讨论、结论等），必须为**每个缺失章节**生成补全\n"
+        "2. 即使论文没有明显缺失章节，也应检查各章节内容是否完整，为**内容单薄或不完整的章节**生成补全建议\n"
+        "3. 每条 generated_content 必须**至少 500 个字**，按以下结构撰写：\n"
+        "   ①【章节定位】该章节在论文中的作用和重要性\n"
+        "   ②【核心要点】该章节应包含的关键内容和论点\n"
+        "   ③【草稿正文】实际可用的内容草稿（用具体、学术化的语言撰写，紧密结合论文已有内容）\n"
+        "4. 补全内容必须与论文的研究主题、方法、数据紧密结合，**不能是通用模板**\n"
+        "5. 格式：\n"
+        "[{\"section\": \"缺失或内容不足的章节名\", \"generated_content\": \"按上述结构撰写的内容（≥500字）\", "
+        "\"confidence\": 0.5-0.9 的浮点数}]\n\n"
+        "### journals - 推荐期刊 Top 10\n"
         "[{\"name\": \"期刊/会议全称（含缩写）\", \"level\": \"CCF-A/B/C 或 SCI Q1/Q2/Q3\", \"match\": \"匹配度百分比\", "
-        "\"reason\": \"推荐理由：说明该期刊的征稿范围与本文主题、方法、创新点的具体匹配关系\"}]\n\n"
+        "\"reason\": \"推荐理由：详细说明该期刊的征稿范围与本文主题、方法、创新点的具体匹配关系（至少 50 字）\"}]\n"
+        "要求：至少 10 条，每条推荐理由必须具体、有针对性。\n\n"
+        "### logical_review - 逻辑连贯性审查（必须详尽填写）\n"
+        "{\n"
+        "  \"section_logic\": [\"逐章节的详细逻辑审查意见1\", \"意见2\", ...],\n"
+        "  \"argument_logic\": [\"论点论据逻辑性审查意见1\", \"意见2\", ...],\n"
+        "  \"coherence_issues\": [\n"
+        "    {\"location\": \"具体位置描述（章节名+段落）\", \"issue_type\": \"section_logic|argument_logic|sentence_coherence|theme_mismatch\", "
+        "     \"description\": \"问题的详细描述\", \"severity\": \"error|warning|info\", \"suggestion\": \"具体的修改建议\"}\n"
+        "  ],\n"
+        "  \"theme_consistency\": [\"与段落/论文主题一致性评价1\", \"评价2\", ...],\n"
+        "  \"overall_assessment\": \"总体逻辑性评价（至少 150 字）\"\n"
+        "}\n\n"
+        "逻辑连贯性审查要点（请逐项详尽审查）：\n"
+        "1. section_logic（至少 4 条）：逐章节检查论文结构是否合理，章节之间的逻辑递进关系是否清晰，"
+        "各章节主题是否明确、重点突出。\n"
+        "2. argument_logic（至少 4 条）：检查每个核心论点的论据是否充分，推理过程是否严密，"
+        "是否存在逻辑跳跃、循环论证、因果混淆等问题。\n"
+        "3. coherence_issues（至少 5 条）：检测具体的行文逻辑问题，包括：\n"
+        "   - sentence_coherence：语句不通顺、前后衔接不自然\n"
+        "   - argument_logic：论证跳跃、论据不足、推理漏洞\n"
+        "   - section_logic：章节间逻辑断层、段落与章节主题不符\n"
+        "   - theme_mismatch：与论文核心主题不相关的内容\n"
+        "4. theme_consistency（至少 3 条）：评价全文是否围绕核心主题展开，各章节内容是否服务于同一研究目标。\n"
+        "5. overall_assessment（至少 150 字）：对论文整体逻辑性给出综合性的总体评价。\n\n"
         "请根据论文的实际创新性、研究方法和主题内容，推荐 10 个最适合投稿的期刊或会议。\n"
         "必须考虑论文质量水平与期刊级别的匹配——高创新高分的推荐顶会/顶刊，中等水平的推荐合适级别的期刊。\n"
         "每条推荐理由必须具体说明该期刊为什么适合本文，不能泛泛而谈。不要返回空数组！\n"
@@ -437,7 +538,7 @@ async def run_review(parsed: ParsedDocument, model_name: str | None = None) -> C
             model=model_to_use,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.7,
-            max_tokens=8000,
+            max_tokens=16384,
         )
         raw = resp.choices[0].message.content or "{}"
         import re as _re
@@ -467,21 +568,51 @@ async def run_review(parsed: ParsedDocument, model_name: str | None = None) -> C
         if raw and raw != "{}":
             print(f"[WARN] Raw response (first 500 chars): {raw[:500]}", file=_sys.stderr)
         missing = detect_missing_sections(text)
+        section_titles = [s.title for s in parsed.sections] if parsed.sections else []
+        # 从已有章节尝试推断论文主题
+        topic_clues = "、".join(section_titles[:6]) if section_titles else "未识别"
         parsed_json = {
             "summary": {
                 "overall_score": 50.0 if missing else 70.0,
-                "strengths": ["稿件结构基本完整"],
+                "strengths": ["稿件结构基本完整", f"包含 {len(section_titles)} 个章节"],
                 "weaknesses": [f"缺少以下章节：{', '.join(missing)}"] if missing else ["暂无需要改进之处"],
                 "recommendation": "major_revision" if missing else "minor_revision",
             },
             "ai_reviews": [{
                 "section": "整体",
-                "review_comment": f"稿件共 {parsed.word_count} 字，{len(parsed.sections)} 个章节。" + (
-                    f"缺失章节：{', '.join(missing)}。" if missing else ""),
-                "suggestion": "请补充缺失的论文章节并进行格式规范化处理。",
+                "review_comment": (
+                    f"【内容质量】\n稿件共 {parsed.word_count} 字，{len(parsed.sections)} 个章节"
+                    f"（{topic_clues}）。"
+                    + (f"缺失章节：{', '.join(missing)}。" if missing else "")
+                    + "\n\n【写作水平】\n文本整体可读，但建议进一步优化表达和逻辑连贯性。"
+                    "\n\n【具体问题】\n由于 LLM 审阅未能成功完成，建议人工补充审阅以下方面："
+                    "内容的创新性、实验设计的合理性、数据分析的准确性。"
+                    "\n\n【优点亮点】\n论文整体框架完整，章节划分合理。"
+                ),
+                "suggestion": (
+                    f"1. 补充缺失章节（{', '.join(missing) if missing else '无' }）\n"
+                    "2. 优化各章节之间的逻辑衔接\n"
+                    "3. 检查实验数据的完整性和准确性\n"
+                    "4. 完善文献综述，突出研究创新点"
+                ),
             }],
             "revisions": [],
-            "completions": [],
+            "completions": [{
+                "section": m,
+                "generated_content": (
+                    f"【章节定位】\n「{m}」是学术论文中的核心组成部分，"
+                    f"对于完整呈现研究工作和说服审稿人具有关键作用。"
+                    f"当前稿件中缺少该章节，需要基于论文已有内容（主题：{topic_clues}）进行补充。\n\n"
+                    f"【核心要点】\n该章节应涵盖以下关键内容：\n"
+                    f"1. 与该章主题直接相关的背景阐述\n"
+                    f"2. 结合论文已有研究内容的深入分析\n"
+                    f"3. 支撑结论的关键论据和数据\n\n"
+                    f"【草稿正文】\n（请作者根据论文具体内容进行撰写，"
+                    f"建议围绕{topic_clues}等已有章节中涉及的相关内容展开，"
+                    f"确保与全文逻辑一致、风格统一。）"
+                ),
+                "confidence": 0.35,
+            } for m in missing],
         }
 
     # 3. 降级补充：如果 LLM 未返回足够的 revisions/completions/journals，从规则/内容生成
@@ -533,6 +664,30 @@ async def run_review(parsed: ParsedDocument, model_name: str | None = None) -> C
                     pass  # 字段不完整则跳过
         return out
 
+    # 解析逻辑连贯性审查
+    lr_raw = parsed_json.get("logical_review", {}) or {}
+    logical_review = None
+    try:
+        coherence_issues = []
+        for ci in (lr_raw.get("coherence_issues") or []):
+            if isinstance(ci, dict):
+                coherence_issues.append(CoherenceIssue(
+                    location=ci.get("location", "未知位置"),
+                    issue_type=ci.get("issue_type", "sentence_coherence"),
+                    description=ci.get("description", ""),
+                    severity=ci.get("severity", "warning"),
+                    suggestion=ci.get("suggestion"),
+                ))
+        logical_review = LogicalReview(
+            section_logic=lr_raw.get("section_logic") or [],
+            argument_logic=lr_raw.get("argument_logic") or [],
+            coherence_issues=coherence_issues,
+            theme_consistency=lr_raw.get("theme_consistency") or [],
+            overall_assessment=lr_raw.get("overall_assessment", ""),
+        )
+    except Exception:
+        pass  # 逻辑审查解析失败不影响其他审稿结果
+
     report = CompletionReport(
         file_name=parsed.file_name,
         status="completed",
@@ -546,6 +701,7 @@ async def run_review(parsed: ParsedDocument, model_name: str | None = None) -> C
         ai_reviews=_safe_parse(parsed_json.get("ai_reviews"), AIReviewItem),
         revisions=_safe_parse(parsed_json.get("revisions"), Revision),
         completions=_safe_parse(parsed_json.get("completions"), CompletionItem),
+        logical_review=logical_review,
     )
 
     # 4. 记录历史（保存完整报告和原文供下载）
@@ -574,6 +730,20 @@ app = FastAPI(title="论文审稿系统", version="1.0.0", lifespan=_lifespan)
 app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
 )
+
+
+@app.get("/")
+def root():
+    """根路径 — 返回 API 信息"""
+    return {
+        "service": "学术论文审稿系统",
+        "version": "1.0.0",
+        "api_docs": "/docs",
+        "api_health": "/api/health",
+        "api_models": "/api/models",
+        "api_review": "/api/review (POST)",
+        "frontend": "http://localhost:3000 (Vite 开发服务器)",
+    }
 
 
 @app.get("/api/health")

@@ -42,6 +42,22 @@ export interface ReviewSummary {
   recommendation: 'accept' | 'minor_revision' | 'major_revision' | 'reject';
 }
 
+export interface CoherenceIssue {
+  location: string;
+  issue_type: 'section_logic' | 'argument_logic' | 'sentence_coherence' | 'theme_mismatch';
+  description: string;
+  severity: 'error' | 'warning' | 'info';
+  suggestion?: string;
+}
+
+export interface LogicalReview {
+  section_logic: string[];
+  argument_logic: string[];
+  coherence_issues: CoherenceIssue[];
+  theme_consistency: string[];
+  overall_assessment: string;
+}
+
 export interface CompletionReport {
   id: string;
   timestamp: Date;
@@ -52,6 +68,7 @@ export interface CompletionReport {
   ai_reviews: AIReviewItem[];
   revisions: Revision[];
   completions: CompletionItem[];
+  logical_review?: LogicalReview | null;
 }
 
 export interface HistoryRecord {
