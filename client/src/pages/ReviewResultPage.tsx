@@ -116,13 +116,15 @@ function ReviewResultPage({ report }: Props) {
   };
 
   const tabs = [
-    { label: '📊 总评',          key: 'summary',     count: 0 },
-    { label: '📋 规则检查',      key: 'rules',       count: report.rules.length },
-    { label: '🔍 逻辑审查',      key: 'logical',     count: report.logical_review?.coherence_issues.length ?? 0 },
-    { label: '🤖 AI 审阅',      key: 'ai',          count: report.ai_reviews.length },
-    { label: '✍️ 修订痕迹',     key: 'revisions',   count: report.revisions.length },
-    { label: '📝 自动补全',     key: 'completions', count: report.completions.length },
-    { label: '📚 推荐期刊',      key: 'journals',    count: journals.length },
+    { label: '📊 总评',           key: 'summary',     count: 0 },
+    { label: '📋 规则检查',       key: 'rules',       count: report.rules.length },
+    { label: '🔍 逻辑审查',       key: 'logical',     count: report.logical_review?.coherence_issues.length ?? 0 },
+    { label: '🤖 AI 审阅',       key: 'ai',          count: report.ai_reviews.length },
+    { label: '✍️ 修订痕迹',      key: 'revisions',   count: report.revisions.length },
+    { label: '📝 自动补全',       key: 'completions', count: report.completions.length },
+    { label: '📚 推荐期刊',        key: 'journals',    count: journals.length },
+    { label: '✨ 论文润色',       key: 'polished',    count: report.polished_paper ? 1 : 0 },
+    { label: '📖 文献综述',       key: 'lit_review',  count: report.literature_review ? 1 : 0 },
   ];
 
   return (
@@ -440,6 +442,61 @@ function ReviewResultPage({ report }: Props) {
                 <p className="journal-reason">{j.reason}</p>
               </div>
             ))
+          )}
+        </div>
+      )}
+
+      {/* ── Tab 7: 论文润色 ──────────────────────── */}
+      {activeTab === 7 && (
+        <div className="card">
+          <div className="card-title">✨ 论文润色（SCI 级学术文稿）</div>
+
+          {/* 🆕 人工审核提示 */}
+          <div style={{
+            background: 'var(--warning-bg)',
+            border: '1px solid var(--warning-border)',
+            borderRadius: 8,
+            padding: '12px 16px',
+            marginBottom: 16,
+            fontSize: 13,
+            color: '#92400e',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+          }}>
+            <span style={{ fontSize: 18 }}>⚠️</span>
+            <span>
+              <strong>审核提醒：</strong>
+              润色内容由 AI 自动生成，建议您快速浏览全文，检查是否存在异常重复词、截断或不连贯之处，再进行下载使用。
+            </span>
+          </div>
+
+          {!report.polished_paper ? (
+            <div className="empty-state">
+              <div className="empty-state-icon">✨</div>
+              <p>暂无润色结果 — 可能是 LLM 未能生成润色内容</p>
+            </div>
+          ) : (
+            <div className="polished-text" style={{ whiteSpace: 'pre-wrap', lineHeight: 1.8 }}>
+              {report.polished_paper}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Tab 8: 文献综述 ──────────────────────── */}
+      {activeTab === 8 && (
+        <div className="card">
+          <div className="card-title">📖 文献综述</div>
+          {!report.literature_review ? (
+            <div className="empty-state">
+              <div className="empty-state-icon">📖</div>
+              <p>暂无文献综述结果 — 可能是 LLM 未能生成综述内容</p>
+            </div>
+          ) : (
+            <div className="lit-review-text" style={{ whiteSpace: 'pre-wrap', lineHeight: 1.8 }}>
+              {report.literature_review}
+            </div>
           )}
         </div>
       )}

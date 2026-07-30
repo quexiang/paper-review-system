@@ -69,6 +69,8 @@ export interface CompletionReport {
   revisions: Revision[];
   completions: CompletionItem[];
   logical_review?: LogicalReview | null;
+  polished_paper?: string | null;
+  literature_review?: string | null;
 }
 
 export interface HistoryRecord {

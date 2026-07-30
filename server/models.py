@@ -149,6 +149,8 @@ class CompletionReport(BaseModel):
     revisions: list[Revision] = []
     completions: list[CompletionItem] = []
     logical_review: Optional[LogicalReview] = None  # 逻辑连贯性审查结果
+    polished_paper: Optional[str] = None             # 论文润色后全文
+    literature_review: Optional[str] = None          # 文献综述全文
 
 
 # ── 历史记录 ──────────────────────────────────────────────

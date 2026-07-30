@@ -1,15 +1,18 @@
 # 📝 学术论文审稿系统
 
-> 智能规则检查 + AI 语义审阅 + 修订痕迹 + 自动补全 + 期刊推荐
+> 智能规则检查 + AI 语义审阅 + 逻辑审查 + 修订痕迹 + 自动补全 + 论文润色 + 文献综述 + 期刊推荐
 
 ## 功能特性
 
 - **📄 多格式支持**：PDF / DOCX / TXT / Markdown
-- **🤖 多模型选择**：界面切换不同大模型（GPT-4o / Claude / Qwen / DeepSeek 等），Ollama 自动发现
+- **🤖 多模型选择**：界面切换不同大模型（Claude Sonnet 4.5 / Opus 4.5 / Haiku 4.5 等），支持自定义端点
 - **📋 规则引擎**：章节完整性、格式规范、引用匹配、中英文混排检测
 - **🧠 AI 深度审阅**：LLM 逐章节语义分析，含原文定位和具体修改建议
+- **🔍 逻辑连贯性审查**：章节逻辑、论点论据逻辑、语句连贯性、主题一致性全方位检测
 - **✍️ 修订痕迹**：增/删/改对比展示，标注修改位置和理由
 - **📝 自动补全**：检测缺失章节并生成 AI 补全草稿（含置信度）
+- **✨ 论文润色**：逐章 SCI 级语言润色，严格保留技术内容和术语
+- **📖 文献综述**：基于论文内容自动生成完整学术文献综述
 - **📚 期刊推荐**：基于论文内容创新性智能推荐 Top 10 投稿期刊，含 IF/接受率/审稿周期
 - **📥 报告下载**：一键下载 DOCX 审稿报告（含修改痕迹、批注、推荐期刊），文件名含模型名+日期
 - **📊 评分报告**：总体评分 + 优点/弱点分析 + 接收建议
@@ -20,7 +23,7 @@
 |---|---|
 | 前端 | React 18 + TypeScript + Vite |
 | 后端 | Python FastAPI + OpenAI SDK + python-docx |
-| AI | OpenAI Compatible API（支持本地 Ollama / GPT / Claude 等） |
+| AI | OpenAI Compatible API（支持自定义端点 / 本地 Ollama / Claude 等） |
 | PDF 解析 | pypdfium2 |
 | DOCX 生成 | python-docx |
 
@@ -29,10 +32,15 @@
 ### 1. 配置环境变量
 
 ```bash
-# 使用 Ollama 本地模型（推荐）
-OPENAI_API_KEY=ollama
-OPENAI_BASE_URL=http://localhost:11434/v1
-MODEL_NAME=qwen3.6:latest
+# 使用自定义端点模型（推荐）
+LAN_MODEL_API_KEY=sk-xxx
+LAN_MODEL_URL=http://your-server:7000/v1
+MODEL_NAME=claude-sonnet-4-5-20251001
+
+# 或使用 Ollama 本地模型
+# OPENAI_API_KEY=ollama
+# OPENAI_BASE_URL=http://localhost:11434/v1
+# MODEL_NAME=qwen3.6:latest
 
 # 或使用云端 API
 # OPENAI_API_KEY=sk-xxx
@@ -70,14 +78,17 @@ npm run dev
 
 1. **选择模型** — 从下拉列表选择审稿大模型
 2. **上传稿件** — 拖拽或选择论文文件
-3. **自动审稿** — 规则检查 → AI 语义分析 → 生成完整报告
-4. **查看结果** — 6 个 Tab 展示：
+3. **自动审稿** — 规则检查 → 并行执行（AI 语义分析 + 论文润色 + 文献综述） → 生成完整报告
+4. **查看结果** — 10 个 Tab 展示：
    - 📊 总评：分数 + 优点/弱点
    - 📋 规则检查：章节/格式/引用问题
+   - 🔍 逻辑审查：章节/论点/语句/主题逻辑性审查
    - 🤖 AI 审阅：逐章节深度意见
    - ✍️ 修订痕迹：增删改对比
    - 📝 自动补全：缺失章节草稿
    - 📚 推荐期刊：Top 10 投稿期刊
+   - ✨ 论文润色：SCI 级语言润色全文
+   - 📖 文献综述：基于论文内容的完整文献综述
 5. **下载报告** — 📥 下载 DOCX（含完整批注和推荐期刊）
 
 ## API 端点
@@ -85,7 +96,7 @@ npm run dev
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/api/health` | 健康检查 |
-| GET | `/api/models` | 可用大模型列表（Ollama 自动发现 + 静态列表） |
+| GET | `/api/models` | 可用大模型列表（Ollama 自动发现 + 自定义端点模型） |
 | POST | `/api/review` | 上传论文并执行审稿（可选 `model` 参数） |
 | GET | `/api/history` | 审稿历史记录 |
 | DELETE | `/api/history/{id}` | 删除历史记录 |
@@ -97,7 +108,7 @@ npm run dev
 ```
 paper-review-system/
 ├── server/                          # FastAPI 后端
-│   ├── main.py                      # API 入口 & 审稿流程编排
+│   ├── main.py                      # API 入口 & 审稿流程编排（三任务并行）
 │   ├── models.py                    # 数据模型 (Pydantic)
 │   ├── parser.py                    # 论文文本解析 & 章节提取
 │   ├── journal_recommender.py       # 期刊推荐引擎（50+ 期刊数据库）
@@ -108,7 +119,9 @@ paper-review-system/
 │   │   └── citation_check.py        # 引用匹配
 │   └── ai_service/                  # AI 审阅服务
 │       ├── llm_client.py            # LLM API 客户端
-│       └── reviewer.py              # AI 审稿 Prompt 模板
+│       ├── reviewer.py              # AI 审稿 Prompt 模板
+│       ├── polisher.py              # 论文逐章润色
+│       └── lit_review.py            # 文献综述生成
 ├── client/                          # React 前端
 │   ├── index.html
 │   ├── package.json
@@ -119,10 +132,11 @@ paper-review-system/
 │       ├── App.tsx                  # 主应用（页面路由 + 模型管理）
 │       ├── styles.css               # 全局样式（现代化设计系统）
 │       ├── types/index.ts           # TypeScript 类型定义
-│       ├── hooks/useReview.ts       # 审稿 Hook（含模型传参）
+│       ├── api/client.ts            # API 请求封装
+│       ├── hooks/useReview.ts       # 审稿 Hook（含模型传参 + 进度显示）
 │       └── pages/
 │           ├── UploadPage.tsx       # 上传页面（含模型选择器）
-│           ├── ReviewResultPage.tsx # 审稿结果页（6 Tab + 下载）
+│           ├── ReviewResultPage.tsx # 审稿结果页（10 Tab + 下载）
 │           └── HistoryPage.tsx      # 历史记录页
 ├── .env                              # 环境变量配置
 ├── .gitignore
@@ -131,12 +145,17 @@ paper-review-system/
 
 ## 支持的 AI 模型
 
-系统自动识别 Ollama 本地可用模型，并预置以下模型列表：
+系统默认提供以下 Claude 4.5 系列模型（通过自定义局域网端点访问）：
 
-- **本地**：Qwen 3.6、DeepSeek R1、Llama 3.3
-- **云端**：GPT-4o、GPT-4o-mini、Claude Sonnet 4、Claude Haiku 4
+- **Claude Sonnet 4.5** — 深度推理，性价比高
+- **Claude Opus 4.5** — 最强推理能力
+- **Claude Haiku 4.5** — 极速响应
+
+同时支持 Ollama 本地模型自动发现，以及任何 OpenAI Compatible API。
 
 Ollama 服务需在本地运行（默认 `localhost:11434`），系统启动时自动发现可用模型。
+
+自定义模型端点通过环境变量 `LAN_MODEL_API_KEY` 和 `LAN_MODEL_URL` 配置。
 
 ## 推荐期刊数据库
 
@@ -147,4 +166,4 @@ Ollama 服务需在本地运行（默认 `localhost:11434`），系统启动时�
 - 计算机应用：Expert Systems with Applications、IP&M、KBS 等
 - 中文核心：计算机学报、软件学报、情报学报、图书情报工作 等
 
-每条期刊含影响因子（IF）、接受率、审稿周期、征稿范围等信息。
+每条期刊含影响因子（IF）、接受率、审稿周期、征稿范围等信息，系统根据论文内容匹配度和质量评分智能排序推荐。
