@@ -28,6 +28,9 @@ from models import (
     HistoryRecord,
     LogicalReview,
     CoherenceIssue,
+    KnowledgeGraph,
+    KnowledgeGraphNode,
+    KnowledgeGraphEdge,
     ParsedDocument,
     ReviewSummary,
     Revision,
@@ -330,6 +333,25 @@ def _build_docx(report: CompletionReport, original_text: str, journals: list[dic
             doc.add_heading('主题一致性评价', level=2)
             for item in report.logical_review.theme_consistency:
                 safe_add_paragraph(doc, item, style='List Bullet')
+
+        if report.logical_review.knowledge_graph and (report.logical_review.knowledge_graph.nodes or report.logical_review.knowledge_graph.edges):
+            doc.add_heading('知识图谱', level=2)
+            if report.logical_review.knowledge_graph.summary:
+                safe_add_paragraph(doc, report.logical_review.knowledge_graph.summary)
+
+            doc.add_heading('节点列表', level=3)
+            type_labels = {"theory": "理论", "method": "方法", "concept": "概念", "result": "结果", "variable": "变量", "finding": "发现"}
+            for node in report.logical_review.knowledge_graph.nodes:
+                label = f"{node.label} ({type_labels.get(node.type, node.type)})"
+                if node.description:
+                    safe_add_paragraph(doc, f"{label}: {node.description}", style='List Bullet')
+                else:
+                    safe_add_paragraph(doc, label, style='List Bullet')
+
+            if report.logical_review.knowledge_graph.edges:
+                doc.add_heading('关系列表', level=3)
+                for edge in report.logical_review.knowledge_graph.edges:
+                    safe_add_paragraph(doc, f"{edge.source} {edge.label} {edge.target}", style='List Bullet')
     else:
         safe_add_paragraph(doc, '暂无逻辑连贯性审查结果。')
 
@@ -559,18 +581,15 @@ def _build_ai_review_prompt(
     if is_english:
         bilingual_hint = (
             "\n\n## 双语输出要求（重要）\n"
-            "以下字段必须**同时提供英文原文和中文翻译**：summary 下的 strengths、weaknesses、overall_assessment、recommendation；review_comment；logical_review 下所有字段（research_theme、research_framework、section_logic、argument_logic、coherence_issues.description、coherence_issues.suggestion、theme_consistency、overall_assessment）；completions 下 generated_content。\n"
+            "以下字段必须**同时提供英文原文和中文翻译**：summary 下的 strengths、weaknesses、overall_assessment、recommendation；review_comment；logical_review 下所有字段（research_theme、research_framework、section_logic、argument_logic、coherence_issues.description、coherence_issues.suggestion、theme_consistency、overall_assessment、knowledge_graph.summary）；completions 下 generated_content。\n"
             "格式：每个字段先写英文，空一行，加 `--- 中文翻译 ---`，再写中文。\n"
             "示例 review_comment：\n"
             "\"[English review comment text...]\n\n--- 中文翻译 ---\n\n[中文审阅意见]\"\n"
             "示例 strengths 数组：\n"
             "\"strengths\": [\"[English item...]\n\n--- 中文翻译 ---\n\n[中文]\", ...]\n"
-            "示例 logical_review 字符串字段（research_theme、research_framework、overall_assessment）：\n"
-            "\"research_theme\": \"[English analysis...]\n\n--- 中文翻译 ---\n\n[中文分析]\"\n"
-            "示例 logical_review 数组字段（section_logic、argument_logic、theme_consistency）——每项内部双语：\n"
-            "\"section_logic\": [\"[English item 1...]\n\n--- 中文翻译 ---\n\n[中文条目 1]\", \"[English item 2...]\n\n--- 中文翻译 ---\n\n[中文条目 2]\"]\n"
-            "示例 coherence_issues.description 和 suggestion：\n"
-            "\"description\": \"[English problem...]\n\n--- 中文翻译 ---\n\n[中文问题]\"\n"
+            "示例 knowledge_graph.summary：\n"
+            "\"summary\": \"[English summary...]\n\n--- 中文翻译 ---\n\n[中文总结]\"\n"
+            "注意：nodes 和 edges 数组中的 id、label、type 等内部字段**只用英文**，不需要翻译。\n"
             "注意：journals、revisions、section（章节名）、issue_type、severity 等内部字段**只用英文**。\n"
             "请确保中文翻译准确、流畅，不遗漏关键信息。\n"
         )
@@ -640,10 +659,27 @@ def _build_ai_review_prompt(
     {{"location": "位置描述（英文）", "issue_type": "section_logic|argument_logic|sentence_coherence|theme_mismatch", "description": "[English problem description...]\\n\\n--- 中文翻译 ---\\n\\n[中文问题描述]", "severity": "error|warning|info", "suggestion": "[English suggestion...]\\n\\n--- 中文翻译 ---\\n\\n[中文建议]"}}
   ],
   "theme_consistency": ["[English item 1 about theme consistency...]\\n\\n--- 中文翻译 ---\\n\\n[中文条目1]", "[English item 2...]\\n\\n--- 中文翻译 ---\\n\\n[中文条目2]"],
-  "overall_assessment": "[English overall assessment, ≥150 words]\\n\\n--- 中文翻译 ---\\n\\n[中文总体评价，至少150字]"
+  "overall_assessment": "[English overall assessment, ≥150 words]\\n\\n--- 中文翻译 ---\\n\\n[中文总体评价，至少150字]",
+
+  "knowledge_graph": {{
+    "summary": "[English summary of the knowledge structure]\\n\\n--- 中文翻译 ---\\n\\n[中文知识图谱结构描述]",
+    "nodes": [
+      {{"id": "n1", "label": "[Entity name]", "type": "theory|method|concept|result|variable|finding", "description": "[Brief description]"}},
+      {{"id": "n2", "label": "[Entity name]", "type": "theory|method|concept|result|variable|finding", "description": "[Brief description]"}},
+      {{... 继续提取 8-15 个关键知识节点}}
+    ],
+    "edges": [
+      {{"source": "n1", "target": "n2", "label": "[Relationship description]", "type": "supports|uses|contradicts|related|causes|improves"}},
+      {{... 提取节点之间的关系，5-10 条}}
+    ]
+  }}
 }}
 
-请确保返回的是完整的、合法的 JSON 对象。不要截断 JSON。如果内容过长，请适当压缩但保持完整结构。
+注意：
+- nodes: 提取论文中的关键知识元素，包括理论、方法、概念、结果、变量、发现等
+- edges: 描述节点之间的关系，如"方法A支持理论B"、"变量C影响结果D"
+- id 必须全局唯一，使用 "n1", "n2" 等简单命名
+- edges 的 source 和 target 必须引用存在的节点 id
 """
 
 
@@ -1289,6 +1325,11 @@ async def run_review(parsed: ParsedDocument, model_name: str | None = None) -> C
                     severity=ci.get("severity", "warning"),
                     suggestion=ci.get("suggestion"),
                 ))
+        knowledge_graph = KnowledgeGraph(
+            nodes=[KnowledgeGraphNode(**n) for n in (lr_raw.get("knowledge_graph", {}).get("nodes") or [])],
+            edges=[KnowledgeGraphEdge(**e) for e in (lr_raw.get("knowledge_graph", {}).get("edges") or [])],
+            summary=lr_raw.get("knowledge_graph", {}).get("summary") or "",
+        )
         logical_review = LogicalReview(
             research_theme=lr_raw.get("research_theme") or "",
             research_framework=lr_raw.get("research_framework") or "",
@@ -1297,6 +1338,7 @@ async def run_review(parsed: ParsedDocument, model_name: str | None = None) -> C
             coherence_issues=coherence_issues,
             theme_consistency=lr_raw.get("theme_consistency") or [],
             overall_assessment=lr_raw.get("overall_assessment", ""),
+            knowledge_graph=knowledge_graph,
         )
     except Exception:
         pass

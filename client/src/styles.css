@@ -1018,3 +1018,25 @@ body {
   margin-top: 10px;
   padding-left: 46px;
 }
+
+/* ── 知识图谱 ──────────────────────────────────── */
+
+.knowledge-graph-container {
+  width: 100%;
+  height: 500px;
+  border: 1px solid var(--gray-200);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fafbfc;
+}
+
+.knowledge-graph-container svg line {
+  stroke: #cbd5e1;
+  stroke-width: 1.5;
+}
+
+.knowledge-graph-container svg text.link-label {
+  font-size: 9px;
+  fill: #94a3b8;
+  pointer-events: none;
+}

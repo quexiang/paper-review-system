@@ -128,6 +128,29 @@ class CoherenceIssue(BaseModel):
     suggestion: Optional[str] = None  # 修改建议
 
 
+class KnowledgeGraphNode(BaseModel):
+    """知识图谱节点"""
+    id: str                                        # 唯一标识
+    label: str                                     # 显示名称
+    type: str                                      # 节点类型: theory/method/concept/result/variable/finding
+    description: str = ""                          # 节点简要描述
+
+
+class KnowledgeGraphEdge(BaseModel):
+    """知识图谱边"""
+    source: str                                    # 源节点 id
+    target: str                                    # 目标节点 id
+    label: str = ""                                # 关系描述
+    type: str = "related"                          # 关系类型: supports/uses/contradicts/related/causes/improves
+
+
+class KnowledgeGraph(BaseModel):
+    """知识图谱"""
+    nodes: list[KnowledgeGraphNode] = []
+    edges: list[KnowledgeGraphEdge] = []
+    summary: str = ""                              # 图谱结构简要描述
+
+
 class LogicalReview(BaseModel):
     """逻辑连贯性审查结果"""
     research_theme: str = ""                       # 论文研究主题分析
@@ -137,6 +160,7 @@ class LogicalReview(BaseModel):
     coherence_issues: list[CoherenceIssue] = []    # 检测到的逻辑不通顺问题
     theme_consistency: list[str] = []              # 与段落主题、论文主题一致性评价
     overall_assessment: str = ""                   # 总体逻辑性评价
+    knowledge_graph: Optional[KnowledgeGraph] = None  # 知识图谱
 
 
 class CompletionReport(BaseModel):

@@ -50,6 +50,30 @@ export interface CoherenceIssue {
   suggestion?: string;
 }
 
+export interface KnowledgeGraphNode {
+  id: string;
+  label: string;
+  type: 'theory' | 'method' | 'concept' | 'result' | 'variable' | 'finding' | string;
+  description: string;
+  x?: number;
+  y?: number;
+  fx?: number | null;
+  fy?: number | null;
+}
+
+export interface KnowledgeGraphEdge {
+  source: string;
+  target: string;
+  label: string;
+  type: 'supports' | 'uses' | 'contradicts' | 'related' | 'causes' | 'improves' | string;
+}
+
+export interface KnowledgeGraph {
+  nodes: KnowledgeGraphNode[];
+  edges: KnowledgeGraphEdge[];
+  summary: string;
+}
+
 export interface LogicalReview {
   research_theme: string;
   research_framework: string;
@@ -58,6 +82,7 @@ export interface LogicalReview {
   coherence_issues: CoherenceIssue[];
   theme_consistency: string[];
   overall_assessment: string;
+  knowledge_graph: KnowledgeGraph;
 }
 
 export interface CompletionReport {

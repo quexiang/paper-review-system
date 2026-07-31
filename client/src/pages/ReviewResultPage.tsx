@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import type { CompletionReport } from '../types';
+import * as d3 from 'd3';
 
 interface Props {
   report: CompletionReport;
@@ -146,6 +147,7 @@ function ReviewResultPage({ report }: Props) {
   const tabs = [
     { label: '📊 总评',           key: 'summary',     count: 0 },
     { label: '🔍 逻辑审查',       key: 'logical',     count: report.logical_review?.coherence_issues.length ?? 0 },
+    { label: '🕸️ 知识图谱',        key: 'knowledge',  count: report.logical_review?.knowledge_graph?.nodes?.length ?? 0 },
     { label: '🤖 AI 审阅',       key: 'ai',          count: report.ai_reviews.length },
     { label: '✍️ 修订痕迹',      key: 'revisions',   count: report.revisions.length },
     { label: '📝 自动补全',       key: 'completions', count: report.completions.length },
@@ -360,8 +362,47 @@ function ReviewResultPage({ report }: Props) {
         </div>
       )}
 
-      {/* ── Tab 2: AI 审阅 ─────────────────────────── */}
+      {/* ── Tab 2: 知识图谱 ────────────────────────── */}
       {activeTab === 2 && (
+        <div className="card">
+          <div className="card-title">🕸️ 知识图谱</div>
+          {!report.logical_review?.knowledge_graph?.nodes?.length ? (
+            <div className="empty-state">
+              <div className="empty-state-icon">🕸️</div>
+              <p>暂无知识图谱 — LLM 未能提取知识结构</p>
+            </div>
+          ) : (
+            <>
+              {report.logical_review?.knowledge_graph?.summary && (
+                <div style={{ marginBottom: 16 }}>
+                  <div style={{ fontWeight: 700, marginBottom: 8 }}>📋 图谱结构：</div>
+                  <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.8 }}>{formatBilingual(report.logical_review.knowledge_graph.summary)}</div>
+                </div>
+              )}
+              <div style={{ display: 'flex', gap: 16, marginBottom: 16, flexWrap: 'wrap' }}>
+                {(['theory', 'method', 'concept', 'result', 'variable', 'finding'] as const).map(type => {
+                  const kg = report.logical_review?.knowledge_graph;
+                  const count = kg?.nodes.filter(n => n.type === type).length ?? 0;
+                  if (count === 0) return null;
+                  const typeNames: Record<string, string> = { theory: '理论', method: '方法', concept: '概念', result: '结果', variable: '变量', finding: '发现' };
+                  return (
+                    <span key={type} className="badge badge-info">{typeNames[type]}：{count}</span>
+                  );
+                }).filter(Boolean)}
+              </div>
+              <div style={{ width: '100%', height: 500, border: '1px solid var(--gray-200)', borderRadius: 8, overflow: 'hidden' }}>
+                <KnowledgeGraphVisualization
+                  nodes={report.logical_review?.knowledge_graph?.nodes ?? []}
+                  edges={report.logical_review?.knowledge_graph?.edges ?? []}
+                />
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ── Tab 3: AI 审阅 ─────────────────────────── */}
+      {activeTab === 3 && (
         <div className="card">
           <div className="card-title">🤖 AI 审阅意见</div>
           {report.ai_reviews.length === 0 ? (
@@ -394,7 +435,7 @@ function ReviewResultPage({ report }: Props) {
       )}
 
       {/* ── Tab 3: 修订痕迹 ────────────────────────── */}
-      {activeTab === 3 && (
+      {activeTab === 4 && (
         <div className="card">
           <div className="card-title">✍️ 修订痕迹</div>
           {report.revisions.length === 0 ? (
@@ -420,7 +461,7 @@ function ReviewResultPage({ report }: Props) {
       )}
 
       {/* ── Tab 4: 自动补全 ────────────────────────── */}
-      {activeTab === 4 && (
+      {activeTab === 5 && (
         <div className="card">
           <div className="card-title">📝 自动补全内容</div>
           {report.completions.length === 0 ? (
@@ -450,8 +491,8 @@ function ReviewResultPage({ report }: Props) {
         </div>
       )}
 
-      {/* ── Tab 5: 论文润色 ──────────────────────── */}
-      {activeTab === 5 && (
+      {/* ── Tab 6: 论文润色 ──────────────────────── */}
+      {activeTab === 6 && (
         <div className="card">
           <div className="card-title">✨ 论文润色（SCI 级学术文稿）</div>
 
@@ -489,7 +530,7 @@ function ReviewResultPage({ report }: Props) {
       )}
 
       {/* ── Tab 6: 文献综述 ──────────────────────── */}
-      {activeTab === 6 && (
+      {activeTab === 7 && (
         <div className="card">
           <div className="card-title">📖 文献综述</div>
           {!report.literature_review ? (
@@ -506,7 +547,7 @@ function ReviewResultPage({ report }: Props) {
       )}
 
       {/* ── Tab 7: 推荐期刊 ────────────────────────── */}
-      {activeTab === 7 && (
+      {activeTab === 8 && (
         <div className="card">
           <div className="card-title">📚 推荐投稿期刊（Top 10）</div>
           {journalsLoading ? (
@@ -546,3 +587,141 @@ function ReviewResultPage({ report }: Props) {
 }
 
 export default ReviewResultPage;
+
+/* ── 知识图谱可视化组件 ─────────────────────────────────── */
+
+import { useEffect, useRef } from 'react';
+import type { KnowledgeGraphNode, KnowledgeGraphEdge } from '../types';
+
+const NODE_COLORS: Record<string, string> = {
+  theory: '#6366f1',
+  method: '#06b6d4',
+  concept: '#8b5cf6',
+  result: '#f59e0b',
+  variable: '#10b981',
+  finding: '#ef4444',
+};
+
+function KnowledgeGraphVisualization({
+  nodes,
+  edges,
+}: {
+  nodes: KnowledgeGraphNode[];
+  edges: KnowledgeGraphEdge[];
+}) {
+  const svgRef = useRef<SVGSVGElement>(null);
+
+  useEffect(() => {
+    if (!svgRef.current || !nodes.length) return;
+
+    const svg = d3.select(svgRef.current);
+    const width = svgRef.current.clientWidth;
+    const height = svgRef.current.clientHeight;
+
+    // Clear previous
+    svg.selectAll('*').remove();
+
+    const simulation = d3.forceSimulation<KnowledgeGraphNode>(nodes)
+      .force('link', d3.forceLink<KnowledgeGraphNode, KnowledgeGraphEdge>(edges).id(d => d.id).distance(120))
+      .force('charge', d3.forceManyBody().strength(-300))
+      .force('center', d3.forceCenter(width / 2, height / 2))
+      .force('collision', d3.forceCollide().radius(40));
+
+    const linkGroup = svg.append('g').attr('class', 'links');
+    const link = linkGroup.selectAll('line')
+      .data(edges)
+      .join('line')
+      .attr('stroke', '#cbd5e1')
+      .attr('stroke-width', 1.5);
+
+    const linkLabel = linkGroup.selectAll('text')
+      .data(edges)
+      .join('text')
+      .attr('font-size', 9)
+      .attr('fill', '#94a3b8')
+      .text(d => d.label);
+
+    const nodeGroup = svg.append('g').attr('class', 'nodes');
+    const node = nodeGroup.selectAll('g')
+      .data(nodes)
+      .join('g');
+
+    const drag = d3.drag<any, KnowledgeGraphNode>()
+      .on('start', (_event, d) => {
+        if (!_event.active) simulation.alphaTarget(0.3).restart();
+        d.fx = d.x;
+        d.fy = d.y;
+      })
+      .on('drag', (_event, d) => {
+        d.fx = _event.x;
+        d.fy = _event.y;
+      });
+
+    node.call(drag);
+
+    node.append('circle')
+      .attr('r', 22)
+      .attr('fill', d => NODE_COLORS[d.type] || '#94a3b8')
+      .attr('stroke', '#fff')
+      .attr('stroke-width', 2);
+
+    node.append('text')
+      .attr('text-anchor', 'middle')
+      .attr('dy', '0.35em')
+      .attr('fill', '#fff')
+      .attr('font-size', 10)
+      .attr('font-weight', 700)
+      .text(d => d.label.slice(0, 4));
+
+    node.append('title').text(d => d.label);
+
+    node.append('text')
+      .attr('text-anchor', 'middle')
+      .attr('dy', 35)
+      .attr('font-size', 9)
+      .attr('fill', '#475569')
+      .text(d => d.label);
+
+    simulation.on('tick', () => {
+      link
+        .attr('x1', (d: KnowledgeGraphEdge) => ((d.source as unknown as KnowledgeGraphNode).x ?? 0))
+        .attr('y1', (d: KnowledgeGraphEdge) => ((d.source as unknown as KnowledgeGraphNode).y ?? 0))
+        .attr('x2', (d: KnowledgeGraphEdge) => ((d.target as unknown as KnowledgeGraphNode).x ?? 0))
+        .attr('y2', (d: KnowledgeGraphEdge) => ((d.target as unknown as KnowledgeGraphNode).y ?? 0));
+
+      linkLabel
+        .attr('x', (d: KnowledgeGraphEdge) => (((d.source as unknown as KnowledgeGraphNode).x ?? 0) + ((d.target as unknown as KnowledgeGraphNode).x ?? 0)) / 2)
+        .attr('y', (d: KnowledgeGraphEdge) => (((d.source as unknown as KnowledgeGraphNode).y ?? 0) + ((d.target as unknown as KnowledgeGraphNode).y ?? 0)) / 2 - 4)
+        .attr('text-anchor', 'middle');
+
+      node.attr('transform', (d: KnowledgeGraphNode) => `translate(${d.x}, ${d.y})`);
+    });
+
+    // Add click to highlight connected nodes
+    node.on('click', (_event: MouseEvent, d: KnowledgeGraphNode) => {
+      const connected = new Set<string>();
+      edges.forEach(e => {
+        if (e.source === d.id) connected.add(e.target);
+        if (e.target === d.id) connected.add(e.source);
+      });
+      connected.add(d.id);
+      const connectedNodeIds = Array.from(connected);
+
+      svg.selectAll('.nodes circle')
+        .transition().duration(300)
+        .attr('opacity', n => connectedNodeIds.includes((n as KnowledgeGraphNode).id) ? 1 : 0.15)
+        .attr('r', n => connectedNodeIds.includes((n as KnowledgeGraphNode).id) ? ((n as KnowledgeGraphNode).id === d.id ? 28 : 22) : 10);
+
+      svg.selectAll('.links line')
+        .transition().duration(300)
+        .attr('opacity', e => { const ed = e as unknown as KnowledgeGraphEdge; const src = ed.source as unknown as KnowledgeGraphNode; const tgt = ed.target as unknown as KnowledgeGraphNode; return (src.id === d.id || tgt.id === d.id) ? 1 : 0.1; })
+        .attr('stroke', e => { const ed = e as unknown as KnowledgeGraphEdge; const src = ed.source as unknown as KnowledgeGraphNode; const tgt = ed.target as unknown as KnowledgeGraphNode; return (src.id === d.id || tgt.id === d.id) ? (NODE_COLORS[d.type] || '#94a3b8') : '#cbd5e1'; });
+
+      svg.selectAll('.links text')
+        .transition().duration(300)
+        .attr('opacity', e => { const ed = e as unknown as KnowledgeGraphEdge; const src = ed.source as unknown as KnowledgeGraphNode; const tgt = ed.target as unknown as KnowledgeGraphNode; return (src.id === d.id || tgt.id === d.id) ? 1 : 0.1; });
+    });
+  }, [nodes, edges]);
+
+  return <svg ref={svgRef} style={{ width: '100%', height: '100%' }} />;
+}
