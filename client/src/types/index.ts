@@ -51,6 +51,8 @@ export interface CoherenceIssue {
 }
 
 export interface LogicalReview {
+  research_theme: string;
+  research_framework: string;
   section_logic: string[];
   argument_logic: string[];
   coherence_issues: CoherenceIssue[];
@@ -71,6 +73,8 @@ export interface CompletionReport {
   logical_review?: LogicalReview | null;
   polished_paper?: string | null;
   literature_review?: string | null;
+  llm_success?: boolean;
+  error_messages?: string[];
 }
 
 export interface HistoryRecord {

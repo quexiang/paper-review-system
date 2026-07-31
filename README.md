@@ -1,16 +1,16 @@
 # 📝 学术论文审稿系统
 
-> 智能规则检查 + AI 语义审阅 + 逻辑审查 + 修订痕迹 + 自动补全 + 论文润色 + 文献综述 + 期刊推荐
+> AI 深度审阅 + 逻辑连贯性审查 + 修订痕迹 + 自动补全 + 论文润色 + 文献综述 + 期刊推荐
 
 ## 功能特性
 
-- **📄 多格式支持**：PDF / DOCX / TXT / Markdown
-- **🤖 多模型选择**：界面切换不同大模型（Claude Sonnet 4.5 / Opus 4.5 / Haiku 4.5 等），支持自定义端点
-- **📋 规则引擎**：章节完整性、格式规范、引用匹配、中英文混排检测
-- **🧠 AI 深度审阅**：LLM 逐章节语义分析，含原文定位和具体修改建议
-- **🔍 逻辑连贯性审查**：章节逻辑、论点论据逻辑、语句连贯性、主题一致性全方位检测
-- **✍️ 修订痕迹**：增/删/改对比展示，标注修改位置和理由
-- **📝 自动补全**：检测缺失章节并生成 AI 补全草稿（含置信度）
+- **📄 多格式支持**：PDF / DOCX / TXT / Markdown 文件解析提取
+- **🤖 多模型选择**：界面切换不同大模型，支持 OpenAI Compatible API / 本地 Ollama / 自定义端点
+- **📋 规则引擎**：章节完整性检测 + 引用匹配，精准识别关键问题
+- **🧠 AI 深度审阅**：LLM 逐章节语义分析，每条 ≥ 300 字，按内容质量/写作水平/具体问题/优点四维评审
+- **🔍 逻辑连贯性审查**：章节逻辑（≥ 4 条）、论点论据逻辑（≥ 4 条）、语句连贯性（≥ 5 条问题检测）、主题一致性评价、总体逻辑评估（≥ 150 字）
+- **✍️ 修订痕迹**：增/删/改对比展示，≥ 8 条具体修改建议，标注位置和详细理由
+- **📝 自动补全**：检测缺失或内容不足的章节，AI 生成 ≥ 500 字补全草稿，与论文主题紧密结合
 - **✨ 论文润色**：逐章 SCI 级语言润色，严格保留技术内容和术语
 - **📖 文献综述**：基于论文内容自动生成完整学术文献综述
 - **📚 期刊推荐**：基于论文内容创新性智能推荐 Top 10 投稿期刊，含 IF/接受率/审稿周期
@@ -31,16 +31,18 @@
 
 ### 1. 配置环境变量
 
-```bash
-# 使用自定义端点模型（推荐）
-LAN_MODEL_API_KEY=sk-xxx
-LAN_MODEL_URL=http://your-server:7000/v1
-MODEL_NAME=claude-sonnet-4-5-20251001
+复制 `.env` 文件并配置 API 信息：
 
-# 或使用 Ollama 本地模型
-# OPENAI_API_KEY=ollama
-# OPENAI_BASE_URL=http://localhost:11434/v1
-# MODEL_NAME=qwen3.6:latest
+```bash
+# 使用 Ollama 本地模型（推荐本地部署）
+OPENAI_API_KEY=ollama
+OPENAI_BASE_URL=http://localhost:11434/v1
+MODEL_NAME=qwen3.6:latest
+
+# 或使用自定义局域网端点（如局域网部署的 Claude）
+# LAN_MODEL_API_KEY=sk-xxx
+# LAN_MODEL_URL=http://your-server:7000/v1
+# MODEL_NAME=claude-sonnet-4-5-20251001
 
 # 或使用云端 API
 # OPENAI_API_KEY=sk-xxx
@@ -76,25 +78,25 @@ npm run dev
 
 ## 审稿流程
 
-1. **选择模型** — 从下拉列表选择审稿大模型
-2. **上传稿件** — 拖拽或选择论文文件
-3. **自动审稿** — 规则检查 → 并行执行（AI 语义分析 + 论文润色 + 文献综述） → 生成完整报告
-4. **查看结果** — 10 个 Tab 展示：
-   - 📊 总评：分数 + 优点/弱点
-   - 📋 规则检查：章节/格式/引用问题
-   - 🔍 逻辑审查：章节/论点/语句/主题逻辑性审查
-   - 🤖 AI 审阅：逐章节深度意见
-   - ✍️ 修订痕迹：增删改对比
-   - 📝 自动补全：缺失章节草稿
-   - 📚 推荐期刊：Top 10 投稿期刊
+1. **选择模型** — 从下拉列表选择审稿大模型（支持 Claude / GPT / Ollama 等）
+2. **上传稿件** — 拖拽或选择论文文件（PDF / DOCX / TXT / Markdown）
+3. **自动审稿** — 规则检查 → AI 审阅（语义分析 + 逻辑审查 + 论文润色 + 文献综述） → 生成完整报告
+4. **查看结果** — 8 个 Tab 展示：
+   - 📊 总评：分数（0-100）+ 优点（≥ 4 条）/弱点（≥ 4 条）+ 接收建议
+   - 🔍 逻辑审查：研究主题提炼 / 研究路线图与整体框架 / 章节逻辑 / 论点逻辑 / 语句连贯性 / 主题一致性 / 总体评价
+   - 🤖 AI 审阅：逐章节深度意见（每条 ≥ 300 字，含原文定位）
+   - ✍️ 修订痕迹：增/删/改对比（≥ 8 条），标注位置和修改理由
+   - 📝 自动补全：缺失/不足章节补全草稿（每条 ≥ 500 字）
    - ✨ 论文润色：SCI 级语言润色全文
    - 📖 文献综述：基于论文内容的完整文献综述
+   - 📚 推荐期刊：Top 10 投稿期刊推荐
 5. **下载报告** — 📥 下载 DOCX（含完整批注和推荐期刊）
 
 ## API 端点
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
+| GET | `/` | API 信息及文档链接 |
 | GET | `/api/health` | 健康检查 |
 | GET | `/api/models` | 可用大模型列表（Ollama 自动发现 + 自定义端点模型） |
 | POST | `/api/review` | 上传论文并执行审稿（可选 `model` 参数） |
@@ -108,18 +110,18 @@ npm run dev
 ```
 paper-review-system/
 ├── server/                          # FastAPI 后端
-│   ├── main.py                      # API 入口 & 审稿流程编排（三任务并行）
+│   ├── main.py                      # API 入口 & 审稿流程编排
 │   ├── models.py                    # 数据模型 (Pydantic)
 │   ├── parser.py                    # 论文文本解析 & 章节提取
 │   ├── journal_recommender.py       # 期刊推荐引擎（50+ 期刊数据库）
 │   ├── requirements.txt             # Python 依赖
 │   ├── rule_engine/                 # 规则检查模块
-│   │   ├── section_check.py         # 章节完整性
-│   │   ├── format_check.py          # 格式规范
-│   │   └── citation_check.py        # 引用匹配
+│   │   ├── section_check.py         # 章节完整性检测
+│   │   ├── format_check.py          # 格式规范检查
+│   │   └── citation_check.py        # 引用匹配检查
 │   └── ai_service/                  # AI 审阅服务
 │       ├── llm_client.py            # LLM API 客户端
-│       ├── reviewer.py              # AI 审稿 Prompt 模板
+│       ├── reviewer.py              # AI 深度审阅 Prompt
 │       ├── polisher.py              # 论文逐章润色
 │       └── lit_review.py            # 文献综述生成
 ├── client/                          # React 前端
@@ -130,13 +132,13 @@ paper-review-system/
 │   └── src/
 │       ├── main.tsx                 # 入口
 │       ├── App.tsx                  # 主应用（页面路由 + 模型管理）
-│       ├── styles.css               # 全局样式（现代化设计系统）
+│       ├── styles.css               # 全局样式
 │       ├── types/index.ts           # TypeScript 类型定义
 │       ├── api/client.ts            # API 请求封装
 │       ├── hooks/useReview.ts       # 审稿 Hook（含模型传参 + 进度显示）
 │       └── pages/
 │           ├── UploadPage.tsx       # 上传页面（含模型选择器）
-│           ├── ReviewResultPage.tsx # 审稿结果页（10 Tab + 下载）
+│           ├── ReviewResultPage.tsx # 审稿结果页（8 Tab + 下载）
 │           └── HistoryPage.tsx      # 历史记录页
 ├── .env                              # 环境变量配置
 ├── .gitignore

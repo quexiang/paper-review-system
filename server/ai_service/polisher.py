@@ -54,18 +54,54 @@ _SYSTEM_PROMPT = """\
 请直接输出润色后的完整文本：
 """
 
+_SYSTEM_PROMPT_BILINGUAL = """\
+You are a professional academic language editor. Please polish the following paper section, but **strictly preserve all technical content, terminology, data, and argumentation logic**.
 
-async def polish_section(section_text: str, llm_client: object, model: str) -> str:
+Polishing scope (only these):
+1. Fix grammar errors and punctuation issues
+2. Optimize awkward or unfluent sentences
+3. Simplify overly verbose expressions
+4. Strengthen logical connectors between sentences and paragraphs
+
+Absolutely forbidden (do NOT do these):
+1. Do NOT replace or simplify technical terminology
+2. Do NOT delete or reorganize argument content
+3. Do NOT change original data, numbers, or percentages
+4. Do NOT replace key verbs and expressions
+5. Do NOT rephrase the original meaning in your own words
+
+Core principle: The polished text **must have exactly the same meaning** as the original, only with more fluent and professional expression.
+
+Important:
+- Output ONLY the polished text, no explanations, notes, tags, or extra content
+- Preserve the original structure (paragraph divisions, heading hierarchy)
+- Preserve all citation markers like [1], (Smith, 2020), etc.
+- Preserve all mathematical formulas, variables, and symbols
+
+IMPORTANT - BILINGUAL OUTPUT:
+After outputting the polished English text, append the Chinese translation using the exact delimiter "--- 中文翻译 ---" on its own line.
+The format should be: [English polished text]\n\n--- 中文翻译 ---\n\n[Chinese translation of the polished text]
+Both versions must be complete and accurate.
+
+Please output the polished text:
+"""
+
+
+async def polish_section(
+    section_text: str, llm_client: object, model: str, is_english: bool = False
+) -> str:
     """润色单个论文章节，返回润色后的文本"""
     import re
     import asyncio
 
     model_to_use = getattr(llm_client, "_model", model or "gpt-4o")
+    # 英文稿件使用双语 prompt
+    system_prompt = _SYSTEM_PROMPT_BILINGUAL if is_english else _SYSTEM_PROMPT
     try:
         resp = await asyncio.wait_for(
             llm_client.chat.completions.create(
                 model=model_to_use,
-                messages=[{"role": "system", "content": _SYSTEM_PROMPT}, {"role": "user", "content": section_text}],
+                messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": section_text}],
                 temperature=0.7,
                 max_tokens=8192,
                 stop=["\n\n\n"],
@@ -99,7 +135,7 @@ async def polish_section(section_text: str, llm_client: object, model: str) -> s
     return response_text.strip()
 
 
-async def polish_paper(full_text: str, sections: list, llm_client: object, model: str) -> str:
+async def polish_paper(full_text: str, sections: list, llm_client: object, model: str, is_english: bool = False) -> str:
     """
     按章节拆分论文，并发润色后拼接为完整润色文稿。
     """
@@ -116,7 +152,7 @@ async def polish_paper(full_text: str, sections: list, llm_client: object, model
             header = f"{'#' * sec.level} {sec.title}\n"
         section_content = header + sec.content
         async with sem:
-            polished = await polish_section(section_content, llm_client, model)
+            polished = await polish_section(section_content, llm_client, model, is_english)
         return sec_idx, polished
 
     CONCURRENT_LIMIT = 4  # 保持内部并发，但受 main.py 的 Semaphore(2) 限制，实际就是 2

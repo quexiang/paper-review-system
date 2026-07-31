@@ -20,31 +20,90 @@ function scoreClass(score: number): string {
 }
 
 function HistoryPage({ records }: Props) {
+  const [downloading, setDownloading] = React.useState<string | null>(null);
+  const [downloadError, setDownloadError] = React.useState('');
+
+  const handleDownload = async (id: string) => {
+    setDownloading(id);
+    setDownloadError('');
+    try {
+      const res = await fetch(`/api/download/${id}`);
+      if (!res.ok) {
+        if (res.status === 404) {
+          throw new Error('报告已过期（服务器重启后数据丢失），请重新提交审稿后再下载。');
+        }
+        try {
+          const errData = await res.json();
+          if (errData.error) throw new Error(errData.error);
+        } catch {
+          throw new Error(`下载失败（HTTP ${res.status}），请稍后重试。`);
+        }
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const disposition = res.headers.get('Content-Disposition');
+      let filename = '审稿报告.docx';
+      if (disposition) {
+        const match = disposition.match(/filename\*=UTF-8''(.+)/);
+        if (match) filename = decodeURIComponent(match[1]);
+      }
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      setDownloadError(e.message || '下载失败，请重试');
+    } finally {
+      setDownloading(null);
+    }
+  };
+
   return (
     <div className="card">
-      <div className="card-title">📋 审稿历史</div>
+      <div className="card-title">📋 审稿历史（最近 10 篇）</div>
       {records.length === 0 ? (
         <div className="empty-state">
           <div className="empty-state-icon">📋</div>
           <p>暂无历史记录 — 提交论文审稿后将在这里显示</p>
         </div>
       ) : (
-        records.map((r) => (
-          <div key={r.id} className="history-item">
-            <div>
-              <div className="history-file">{r.file_name}</div>
-              <div className="history-time">{new Date(r.timestamp).toLocaleString('zh-CN')}</div>
-            </div>
-            <div className="history-score-wrap">
-              <div className={`history-score ${scoreClass(r.summary.score)}`}>
-                {r.summary.score.toFixed(0)}
-              </div>
-              <span className={`badge ${REC_BADGE[r.summary.recommendation] ?? 'badge-info'}`}>
-                {REC_TEXT[r.summary.recommendation] ?? r.summary.recommendation}
-              </span>
-            </div>
+        <>
+          <div style={{ marginBottom: 12, fontSize: 13, color: 'var(--gray-500)' }}>
+            共 {records.length} 篇 — 仅保留最近 10 篇
           </div>
-        ))
+          {records.map((r) => (
+            <div key={r.id} className="history-item">
+              <div>
+                <div className="history-file">{r.file_name}</div>
+                <div className="history-time">{new Date(r.timestamp).toLocaleString('zh-CN')}</div>
+              </div>
+              <div className="history-score-wrap">
+                <div className={`history-score ${scoreClass(r.summary.score)}`}>
+                  {r.summary.score.toFixed(0)}
+                </div>
+                <span className={`badge ${REC_BADGE[r.summary.recommendation] ?? 'badge-info'}`}>
+                  {REC_TEXT[r.summary.recommendation] ?? r.summary.recommendation}
+                </span>
+              </div>
+              <button
+                className="btn btn-download"
+                onClick={() => handleDownload(r.id)}
+                disabled={downloading === r.id}
+                style={{ marginLeft: 8 }}
+              >
+                {downloading === r.id ? '⏳ 生成中...' : '📥 下载'}
+              </button>
+            </div>
+          ))}
+          {downloadError && (
+            <p style={{ marginTop: 12, fontSize: 13, color: 'var(--danger)', background: 'var(--danger-bg)', padding: '8px 14px', borderRadius: 8 }}>
+              ❌ {downloadError}
+            </p>
+          )}
+        </>
       )}
     </div>
   );

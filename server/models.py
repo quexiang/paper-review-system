@@ -130,10 +130,12 @@ class CoherenceIssue(BaseModel):
 
 class LogicalReview(BaseModel):
     """逻辑连贯性审查结果"""
-    section_logic: list[str]                       # 章节/段落主题逻辑性审查意见
-    argument_logic: list[str]                      # 论点论据逻辑性审查意见
+    research_theme: str = ""                       # 论文研究主题分析
+    research_framework: str = ""                   # 研究路线图 / 整体框架
+    section_logic: list[str] = []                  # 章节/段落主题逻辑性审查意见
+    argument_logic: list[str] = []                 # 论点论据逻辑性审查意见
     coherence_issues: list[CoherenceIssue] = []    # 检测到的逻辑不通顺问题
-    theme_consistency: list[str]                   # 与段落主题、论文主题一致性评价
+    theme_consistency: list[str] = []              # 与段落主题、论文主题一致性评价
     overall_assessment: str = ""                   # 总体逻辑性评价
 
 
@@ -149,8 +151,10 @@ class CompletionReport(BaseModel):
     revisions: list[Revision] = []
     completions: list[CompletionItem] = []
     logical_review: Optional[LogicalReview] = None  # 逻辑连贯性审查结果
-    polished_paper: Optional[str] = None             # 论文润色后全文
-    literature_review: Optional[str] = None          # 文献综述全文
+    polished_paper: Optional[str] = None            # 论文润色后全文
+    literature_review: Optional[str] = None         # 文献综述全文
+    llm_success: bool = True                        # LLM 是否成功执行
+    error_messages: list[str] = []                  # LLM 失败时的错误信息
 
 
 # ── 历史记录 ──────────────────────────────────────────────

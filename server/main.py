@@ -289,26 +289,17 @@ def _build_docx(report: CompletionReport, original_text: str, journals: list[dic
 
     doc.add_page_break()
 
-    # ── 规则检查结果 ────────────────────────────────
-    doc.add_heading('二、规则检查结果', level=1)
-    if report.rules:
-        for r in report.rules:
-            sev_label = {"error": "❌ 错误", "warning": "⚠️ 警告", "info": "ℹ️ 提示"}.get(r.severity.value, r.severity.value)
-            cat_label = {"section": "章节", "format": "格式", "citation": "引用", "grammar": "语法"}.get(r.category.value, r.category.value)
-            doc.add_heading(clean(f'{sev_label}  [{cat_label}] {r.title}'), level=3)
-            safe_add_paragraph(doc, r.description)
-            if r.suggestion:
-                p = doc.add_paragraph()
-                safe_add_run(p, f'💡 建议：{r.suggestion}')
-                p.runs[-1].font.italic = True
-    else:
-        safe_add_paragraph(doc, '✅ 未发现规则检查问题，论文格式符合学术规范。')
-
-    doc.add_page_break()
-
     # ── 逻辑连贯性审查 ────────────────────────────
     doc.add_heading('三、逻辑连贯性审查', level=1)
     if report.logical_review:
+        if report.logical_review.research_theme:
+            doc.add_heading('研究主题分析', level=2)
+            safe_add_paragraph(doc, report.logical_review.research_theme)
+
+        if report.logical_review.research_framework:
+            doc.add_heading('研究路线图 / 整体框架', level=2)
+            safe_add_paragraph(doc, report.logical_review.research_framework)
+
         if report.logical_review.overall_assessment:
             doc.add_heading('总体评价', level=2)
             safe_add_paragraph(doc, report.logical_review.overall_assessment)
@@ -547,6 +538,115 @@ def _extract_core_sections(text: str, sections: list, max_chars: int = 20000) ->
         return text[:max_chars]
     return "".join(result_parts)
 
+# ── 语言检测 ──────────────────────────────────────────────────
+
+def _is_english_text(text: str) -> bool:
+    """判断是否为英文稿件（中文字符占比低于15%即为英文）"""
+    import re
+    chinese_count = len(re.findall(r'[一-鿿]', text))
+    total = len(text.replace('\n', '').replace(' ', ''))
+    if total == 0:
+        return False
+    return (chinese_count / total) < 0.15
+
+
+def _build_ai_review_prompt(
+    rule_lines: str, core_text: str, is_english: bool
+) -> str:
+    """构建 AI 审阅 prompt，英文稿件额外请求中文翻译"""
+
+    bilingual_hint = ""
+    if is_english:
+        bilingual_hint = (
+            "\n\n## 双语输出要求（重要）\n"
+            "以下字段必须**同时提供英文原文和中文翻译**：summary 下的 strengths、weaknesses、overall_assessment、recommendation；review_comment；logical_review 下所有字段（research_theme、research_framework、section_logic、argument_logic、coherence_issues.description、coherence_issues.suggestion、theme_consistency、overall_assessment）；completions 下 generated_content。\n"
+            "格式：每个字段先写英文，空一行，加 `--- 中文翻译 ---`，再写中文。\n"
+            "示例 review_comment：\n"
+            "\"[English review comment text...]\n\n--- 中文翻译 ---\n\n[中文审阅意见]\"\n"
+            "示例 strengths 数组：\n"
+            "\"strengths\": [\"[English item...]\n\n--- 中文翻译 ---\n\n[中文]\", ...]\n"
+            "示例 logical_review 字符串字段（research_theme、research_framework、overall_assessment）：\n"
+            "\"research_theme\": \"[English analysis...]\n\n--- 中文翻译 ---\n\n[中文分析]\"\n"
+            "示例 logical_review 数组字段（section_logic、argument_logic、theme_consistency）——每项内部双语：\n"
+            "\"section_logic\": [\"[English item 1...]\n\n--- 中文翻译 ---\n\n[中文条目 1]\", \"[English item 2...]\n\n--- 中文翻译 ---\n\n[中文条目 2]\"]\n"
+            "示例 coherence_issues.description 和 suggestion：\n"
+            "\"description\": \"[English problem...]\n\n--- 中文翻译 ---\n\n[中文问题]\"\n"
+            "注意：journals、revisions、section（章节名）、issue_type、severity 等内部字段**只用英文**。\n"
+            "请确保中文翻译准确、流畅，不遗漏关键信息。\n"
+        )
+
+    return f"""\
+你是一位资深的学术期刊审稿人，擅长全面、深入地评审学术论文。请对以下论文进行详尽的审阅，返回尽可能全面、完整的审阅结果（纯 JSON，不要使用代码块）。
+
+## 规则检查结果
+{rule_lines}
+
+## 论文核心章节（已自动筛选，保留摘要、引言、方法、实验、结论）
+
+{core_text}
+
+## 重要要求
+你必须返回一个完整的 JSON 对象，包含以下全部字段。每项内容都必须**详尽、具体、有深度**，不能敷衍了事或泛泛而谈。
+{bilingual_hint}
+### summary - 总体评价
+{{"overall_score": 0-100 整数, "strengths": ["优点1", "优点2", ...], "weaknesses": ["缺点1", "缺点2", ...], "recommendation": "accept|minor_revision|major_revision|reject"}}
+要求：strengths 至少 4 条，weaknesses 至少 4 条，每条都要具体针对论文内容。
+
+### ai_reviews - 逐章节 AI 审阅意见（至少 5 条）
+每条格式：{{"section": "章节名", "review_comment": "详尽的审阅意见（≥200字）", "original_text": "原文关键片段（可选）", "suggestion": "具体的修改建议（≥50字）"}}
+
+### revisions - 修订痕迹（至少 8 条）
+每条格式：{{"revision_type": "insertion|deletion|modification", "original_text": "原文（删除/修改时填写）", "new_text": "修改后的内容", "location": "位置描述", "rationale": "修改理由"}}
+
+### completions - 自动补全内容（至少 2 条，如果章节完整则生成内容补充建议）
+每条格式：{{"section": "章节名", "generated_content": "补充内容草稿（≥300字）", "confidence": 0.5-0.9}}
+
+### journals - 推荐期刊 Top 10
+每条格式：{{"name": "期刊/会议全称", "level": "CCF-A/B/C 或 SCI Q1/Q2/Q3", "match": "匹配度百分比", "reason": "推荐理由（≥50字）"}}
+
+### logical_review - 逻辑连贯性审查
+
+**核心要求：** 以下所有审查必须紧密围绕论文的研究主题展开。请先仔细阅读全文，然后完成以下步骤：
+
+**步骤1：提炼研究主题** — 概括论文的核心研究问题、研究目标、采用的主要方法。
+
+**步骤2：绘制研究路线图 / 整体框架** — 这是审查的核心。必须根据论文的实际内容，用 ASCII 结构图清晰画出：
+- 各章节/模块之间的逻辑关系（用箭头 → 表示流程方向）
+- 研究的整体流程：问题提出 → 方法设计 → 实验/分析 → 结论
+- 各模块之间的数据流或逻辑依赖关系
+
+**ASCII 图示例格式：**
+```
+[研究背景与问题] → [文献综述] → [理论框架/假设提出]
+                                      ↓
+                              [研究方法设计] → [数据收集]
+                                      ↓
+                              [实验分析/模型构建] → [结果验证]
+                                      ↓
+                              [结论与建议]
+```
+请用论文中**实际的章节标题和内容**替换抽象的描述，不要只写通用模板。图中的每个节点应对应论文中的实际章节或模块。
+
+**步骤3：基于研究主题和框架，逐项审查。**
+
+### logical_review - 逻辑连贯性审查（注意：每个字段值内必须同时包含英文和中文翻译）
+
+{{
+  "research_theme": "[English analysis of the paper's research theme, core question, objective and methodology, ≥100 words]\\n\\n--- 中文翻译 ---\\n\\n[中文分析，至少100字]",
+  "research_framework": "[English description of research roadmap and framework with ASCII diagram showing actual chapter names and logical flows]\\n\\n--- 中文翻译 ---\\n\\n[中文研究路线图与框架描述]",
+  "section_logic": ["[English item 1 about section logic...]\\n\\n--- 中文翻译 ---\\n\\n[中文条目1]", "[English item 2...]\\n\\n--- 中文翻译 ---\\n\\n[中文条目2]", "[English item 3...]\\n\\n--- 中文翻译 ---\\n\\n[中文条目3]"],
+  "argument_logic": ["[English item 1 about argument logic...]\\n\\n--- 中文翻译 ---\\n\\n[中文条目1]", "[English item 2...]\\n\\n--- 中文翻译 ---\\n\\n[中文条目2]", "[English item 3...]\\n\\n--- 中文翻译 ---\\n\\n[中文条目3]"],
+  "coherence_issues": [
+    {{"location": "位置描述（英文）", "issue_type": "section_logic|argument_logic|sentence_coherence|theme_mismatch", "description": "[English problem description...]\\n\\n--- 中文翻译 ---\\n\\n[中文问题描述]", "severity": "error|warning|info", "suggestion": "[English suggestion...]\\n\\n--- 中文翻译 ---\\n\\n[中文建议]"}}
+  ],
+  "theme_consistency": ["[English item 1 about theme consistency...]\\n\\n--- 中文翻译 ---\\n\\n[中文条目1]", "[English item 2...]\\n\\n--- 中文翻译 ---\\n\\n[中文条目2]"],
+  "overall_assessment": "[English overall assessment, ≥150 words]\\n\\n--- 中文翻译 ---\\n\\n[中文总体评价，至少150字]"
+}}
+
+请确保返回的是完整的、合法的 JSON 对象。不要截断 JSON。如果内容过长，请适当压缩但保持完整结构。
+"""
+
+
 # ── 新增：AI 审阅独立函数（抽离 prompt 逻辑）────────────────
 async def _perform_ai_review(
     text: str,
@@ -554,6 +654,7 @@ async def _perform_ai_review(
     llm: AsyncOpenAI,
     model: str,
     parsed: ParsedDocument,
+    is_english: bool = False,
 ) -> dict:
     """
     仅执行 AI 审阅，返回解析后的 JSON dict。
@@ -563,47 +664,7 @@ async def _perform_ai_review(
     section_titles = [s.title for s in parsed.sections] if parsed.sections else ["（未识别到章节）"]
     core_text = _extract_core_sections(text, parsed.sections, max_chars=20000)
 
-    prompt = f"""你是一位资深的学术期刊审稿人，擅长全面、深入地评审学术论文。请对以下论文进行详尽的审阅，返回尽可能全面、完整的审阅结果（纯 JSON，不要使用代码块）。
-
-    ## 规则检查结果
-    {rule_lines}
-
-    ## 论文核心章节（已自动筛选，保留摘要、引言、方法、实验、结论）
-
-    {core_text}
-
-    ## 重要要求
-    你必须返回一个完整的 JSON 对象，包含以下全部字段。每项内容都必须**详尽、具体、有深度**，不能敷衍了事或泛泛而谈。
-
-    ### summary - 总体评价
-    {{"overall_score": 0-100 整数, "strengths": ["优点1", "优点2", ...], "weaknesses": ["缺点1", "缺点2", ...], "recommendation": "accept|minor_revision|major_revision|reject"}}
-    要求：strengths 至少 4 条，weaknesses 至少 4 条，每条都要具体针对论文内容。
-
-    ### ai_reviews - 逐章节 AI 审阅意见（至少 5 条）
-    每条格式：{{"section": "章节名", "review_comment": "详尽的审阅意见（≥200字）", "original_text": "原文关键片段（可选）", "suggestion": "具体的修改建议（≥50字）"}}
-
-    ### revisions - 修订痕迹（至少 8 条）
-    每条格式：{{"revision_type": "insertion|deletion|modification", "original_text": "原文（删除/修改时填写）", "new_text": "修改后的内容", "location": "位置描述", "rationale": "修改理由"}}
-
-    ### completions - 自动补全内容（至少 2 条，如果章节完整则生成内容补充建议）
-    每条格式：{{"section": "章节名", "generated_content": "补充内容草稿（≥300字）", "confidence": 0.5-0.9}}
-
-    ### journals - 推荐期刊 Top 10
-    每条格式：{{"name": "期刊/会议全称", "level": "CCF-A/B/C 或 SCI Q1/Q2/Q3", "match": "匹配度百分比", "reason": "推荐理由（≥50字）"}}
-
-    ### logical_review - 逻辑连贯性审查
-    {{
-      "section_logic": ["逐章节逻辑审查意见（至少3条）"],
-      "argument_logic": ["论点论据审查意见（至少3条）"],
-      "coherence_issues": [
-        {{"location": "位置描述", "issue_type": "section_logic|argument_logic|sentence_coherence|theme_mismatch", "description": "问题描述", "severity": "error|warning|info", "suggestion": "修改建议"}}
-      ],
-      "theme_consistency": ["主题一致性评价（至少2条）"],
-      "overall_assessment": "总体逻辑性评价（至少150字）"
-    }}
-
-    请确保返回的是完整的、合法的 JSON 对象。不要截断 JSON。如果内容过长，请适当压缩但保持完整结构。
-    """
+    prompt = _build_ai_review_prompt(rule_lines, core_text, is_english)
 
     raw = "{}"
     try:
@@ -884,7 +945,9 @@ def _build_fallback_review(text: str, parsed: ParsedDocument, rules: list[RuleRe
 
 
 # ── 新增：安全包装润色和综述 ──────────────────────────────
-async def _safe_polish(text: str, sections: list, llm: AsyncOpenAI, model: str) -> str | None:
+async def _safe_polish(
+    text: str, sections: list, llm: AsyncOpenAI, model: str, is_english: bool = False
+) -> str | None:
     """安全执行论文润色，失败返回 None"""
     try:
         print("[Polisher] 开始执行润色")
@@ -1002,13 +1065,15 @@ async def _safe_polish(text: str, sections: list, llm: AsyncOpenAI, model: str) 
         print(f"[Polisher] 输入压缩后长度: {len(core_text)} 字")
 
         # 7. 调用润色（传入空列表表示直接润色全文）
-        return await _polish_paper(core_text, [], llm, model)
+        return await _polish_paper(core_text, [], llm, model, is_english)
     except Exception as e:
         print(f"[Polisher] 失败: {e}", file=sys.stderr)
         return None
 
 
-async def _safe_lit_review(text: str, llm: AsyncOpenAI, model: str, parsed: ParsedDocument) -> str | None:
+async def _safe_lit_review(
+    text: str, llm: AsyncOpenAI, model: str, parsed: ParsedDocument, is_english: bool = False
+) -> str | None:
     """安全执行文献综述，失败返回 None"""
     try:
         print("[LitReview] 开始执行文献综述")
@@ -1023,7 +1088,7 @@ async def _safe_lit_review(text: str, llm: AsyncOpenAI, model: str, parsed: Pars
         else:
             print(f"[LitReview] 输入文本从 {len(text)} 字压缩到 {len(core_text)} 字")
 
-        return await _gen_lit_review(core_text, llm, model)
+        return await _gen_lit_review(core_text, llm, model, is_english)
     except Exception as e:
         print(f"[LitReview] 失败: {e}", file=sys.stderr)
         return None
@@ -1041,6 +1106,13 @@ async def run_review(parsed: ParsedDocument, model_name: str | None = None) -> C
     rules.extend(check_format(text))
     rules.extend(check_citations(text))
 
+    # ── 语言检测 ──────────────────────────────────────────
+    is_english = _is_english_text(text)
+    if is_english:
+        print("[Review] 检测到英文稿件，将生成中英文双语审阅结果")
+    else:
+        print("[Review] 检测到中文稿件，生成中文审阅结果")
+
     # 准备 LLM 客户端
     llm = _create_llm(model_name)
     model_to_use = getattr(llm, "_model", model_name or "gpt-4o")
@@ -1055,9 +1127,9 @@ async def run_review(parsed: ParsedDocument, model_name: str | None = None) -> C
             return await coro
 
     # 调用方式完全一样，只是函数内部做了优化
-    ai_task = _limited_task(_perform_ai_review(text, rules, llm, model_to_use, parsed))
-    polish_task = _limited_task(_safe_polish(text, parsed.sections, llm, model_to_use))  # ← 这个函数内部改了
-    lit_task = _limited_task(_safe_lit_review(text, llm, model_to_use, parsed))
+    ai_task = _limited_task(_perform_ai_review(text, rules, llm, model_to_use, parsed, is_english))
+    polish_task = _limited_task(_safe_polish(text, parsed.sections, llm, model_to_use, is_english))
+    lit_task = _limited_task(_safe_lit_review(text, llm, model_to_use, parsed, is_english))
 
     task_start = time.time()
     print(f"[Timer] 三个并行任务开始发起: {task_start:.2f}")
@@ -1070,15 +1142,49 @@ async def run_review(parsed: ParsedDocument, model_name: str | None = None) -> C
         return_exceptions=True
     )
 
-    elapsed = time.time() - task_start
-    print(f"[Timer] 三个并行任务全部完成，总耗时: {elapsed:.2f}s")
+    # ── 检测 LLM 失败 ──────────────────────────────
+    llm_success = True
+    error_messages: list[str] = []
 
-    # ── 处理 AI 审阅结果 ────────────────────────────
     if isinstance(ai_result, Exception):
-        print(f"[AI Review] 失败，使用降级数据: {ai_result}", file=sys.stderr)
+        llm_success = False
+        error_messages.append(f"AI 审阅失败: {ai_result}")
+    if isinstance(polished_text, Exception):
+        llm_success = False
+        error_messages.append(f"论文润色失败: {polished_text}")
+    if isinstance(lit_review_text, Exception):
+        llm_success = False
+        error_messages.append(f"文献综述生成失败: {lit_review_text}")
+
+    if not llm_success:
+        print(f"[Review] ⚠️ LLM 审稿失败: {error_messages}")
+        # 所有 LLM 任务都失败 → 直接返回错误
+        if not any(isinstance(r, Exception) is False for r in (ai_result, polished_text, lit_review_text)):
+            from fastapi import JSONResponse
+            return JSONResponse(
+                status_code=502,
+                content={
+                    "error": "LLM 服务不可用，审稿无法完成",
+                    "messages": error_messages,
+                },
+            )
+
+    # 处理各任务结果
+    ai_error = ai_result if isinstance(ai_result, Exception) else None
+    polish_error = polished_text if isinstance(polished_text, Exception) else None
+    lit_error = lit_review_text if isinstance(lit_review_text, Exception) else None
+
+    # 处理 AI 审阅结果
+    if ai_error is not None:
+        print(f"[AI Review] 失败，使用降级数据: {ai_error}", file=sys.stderr)
         parsed_json = _build_fallback_review(text, parsed, rules)
     else:
         parsed_json = ai_result
+
+    if polished_text is None:
+        polished_text = None  # 明确标记为 None
+    if lit_review_text is None:
+        lit_review_text = None
 
     # ── 降级补充：如果 LLM 未返回足够的 revisions/completions/journals ──
     # 复用原有逻辑（从 rules 生成修订，从缺失章节生成补全，从引擎推荐期刊）
@@ -1184,6 +1290,8 @@ async def run_review(parsed: ParsedDocument, model_name: str | None = None) -> C
                     suggestion=ci.get("suggestion"),
                 ))
         logical_review = LogicalReview(
+            research_theme=lr_raw.get("research_theme") or "",
+            research_framework=lr_raw.get("research_framework") or "",
             section_logic=lr_raw.get("section_logic") or [],
             argument_logic=lr_raw.get("argument_logic") or [],
             coherence_issues=coherence_issues,
@@ -1210,15 +1318,25 @@ async def run_review(parsed: ParsedDocument, model_name: str | None = None) -> C
         logical_review=logical_review,
         polished_paper=polished_text,        # 来自并行任务
         literature_review=lit_review_text,   # 来自并行任务
+        llm_success=llm_success,
+        error_messages=error_messages,
     )
 
-    # 记录历史
+    # 记录历史（仅保留最近 10 篇）
     _history.append(HistoryRecord(
         id=report.id,
         file_name=parsed.file_name,
         timestamp=datetime.now(timezone.utc),
         summary={"score": report.summary.overall_score, "recommendation": report.summary.recommendation},
     ))
+    _history.sort(key=lambda r: r.timestamp)
+    if len(_history) > 10:
+        for old in _history[:-10]:
+            _reports.pop(old.id, None)
+            _original_texts.pop(old.id, None)
+            _journals.pop(old.id, None)
+            _models_used.pop(old.id, None)
+        _history[:] = _history[-10:]
     _reports[report.id] = report
     _original_texts[report.id] = text
     _journals[report.id] = ai_journals
@@ -1340,6 +1458,14 @@ def download_report(review_id: str):
     report = _reports.get(review_id)
     if report is None:
         return JSONResponse(status_code=404, content={"error": "报告不存在或已过期，请重新提交审稿"})
+
+    # 只有 LLM 成功执行了审稿才允许下载
+    if not report.llm_success:
+        msgs = "; ".join(report.error_messages)
+        return JSONResponse(
+            status_code=403,
+            content={"error": f"LLM 审稿失败，无法下载报告: {msgs}"},
+        )
 
     original_text = _original_texts.get(review_id, "")
     journals = _journals.get(review_id)

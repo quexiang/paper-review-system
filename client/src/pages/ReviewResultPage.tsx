@@ -13,6 +13,26 @@ function scoreClass(score: number): string {
   return 'score-low';
 }
 
+/** 双语内容：用明确分隔符区分英文和中文，前端加语言标签 */
+const CN_SEPARATOR = '--- 中文翻译 ---';
+
+function formatBilingual(text: string): React.ReactNode {
+  if (!text) return text;
+  const sepIdx = text.indexOf(CN_SEPARATOR);
+  if (sepIdx === -1) return text;
+  const english = text.slice(0, sepIdx).trim();
+  const chinese = text.slice(sepIdx + CN_SEPARATOR.length).trim();
+  if (!english || !chinese) return text;
+  return (
+    <>
+      {english}
+      <br />
+      <span style={{ color: 'var(--primary)', fontWeight: 700 }}>🇨🇳 中文：</span>
+      {chinese}
+    </>
+  );
+}
+
 const REC_CLASS: Record<string, string> = {
   accept: 'rec-accept', minor_revision: 'rec-minor', major_revision: 'rec-major', reject: 'rec-reject'
 };
@@ -21,16 +41,15 @@ const REC_TEXT: Record<string, string> = {
   accept: '✅ 建议接收', minor_revision: '🔧 小修后接收', major_revision: '📝 大修后复审', reject: '❌ 不建议接收'
 };
 
-const RULE_CLASS: Record<string, string> = {
-  error: 'rule-error', warning: 'rule-warning', info: 'rule-info'
-};
+/** 从双语内容中提取英文原始值，用于推荐文本映射 */
+function extractRecommendation(raw: string): string {
+  const idx = raw.indexOf(CN_SEPARATOR);
+  if (idx !== -1) return raw.slice(0, idx).trim();
+  return raw;
+}
 
 const BADGE_CLASS: Record<string, string> = {
   error: 'badge-error', warning: 'badge-warning', info: 'badge-info'
-};
-
-const RULE_LABEL: Record<string, string> = {
-  section: '📑 章节', format: '📐 格式', citation: '📚 引用', grammar: '✏️ 语法'
 };
 
 const REV_EMOJI: Record<string, string> = {
@@ -88,6 +107,15 @@ function ReviewResultPage({ report }: Props) {
         if (res.status === 404) {
           throw new Error('审稿报告已过期（服务器重启后数据丢失），请重新提交论文审稿后再下载。');
         }
+        // 尝试解析 LLM 失败的详细错误
+        try {
+          const errData = await res.json();
+          if (errData.error) {
+            throw new Error(errData.error);
+          }
+        } catch {
+          // JSON 解析失败，使用默认错误
+        }
         throw new Error(`下载失败（HTTP ${res.status}），请稍后重试。`);
       }
       const blob = await res.blob();
@@ -117,14 +145,13 @@ function ReviewResultPage({ report }: Props) {
 
   const tabs = [
     { label: '📊 总评',           key: 'summary',     count: 0 },
-    { label: '📋 规则检查',       key: 'rules',       count: report.rules.length },
     { label: '🔍 逻辑审查',       key: 'logical',     count: report.logical_review?.coherence_issues.length ?? 0 },
     { label: '🤖 AI 审阅',       key: 'ai',          count: report.ai_reviews.length },
     { label: '✍️ 修订痕迹',      key: 'revisions',   count: report.revisions.length },
     { label: '📝 自动补全',       key: 'completions', count: report.completions.length },
-    { label: '📚 推荐期刊',        key: 'journals',    count: journals.length },
     { label: '✨ 论文润色',       key: 'polished',    count: report.polished_paper ? 1 : 0 },
     { label: '📖 文献综述',       key: 'lit_review',  count: report.literature_review ? 1 : 0 },
+    { label: '📚 推荐期刊',        key: 'journals',    count: journals.length },
   ];
 
   return (
@@ -152,21 +179,40 @@ function ReviewResultPage({ report }: Props) {
             <span>{report.logical_review?.coherence_issues.length ?? 0} 条逻辑问题</span>
             <span>{report.ai_reviews.length} 条 AI 审阅</span>
           </p>
-          <span className={`recommendation-badge ${REC_CLASS[report.summary.recommendation] ?? ''}`}>
-            {REC_TEXT[report.summary.recommendation] ?? report.summary.recommendation}
-          </span>
+          {(() => {
+            const raw = extractRecommendation(report.summary.recommendation);
+            const display = report.summary.recommendation.includes(CN_SEPARATOR)
+              ? report.summary.recommendation
+              : (REC_TEXT[raw] ?? report.summary.recommendation);
+            return (
+              <span className={`recommendation-badge ${REC_CLASS[raw] ?? ''}`}>
+                {formatBilingual(display)}
+              </span>
+            );
+          })()}
+          {/* 只有 LLM 成功执行才允许下载 */}
           <button
             className="btn btn-download"
             onClick={handleDownload}
-            disabled={downloading}
+            disabled={downloading || report.llm_success === false}
             style={{ marginLeft: 12 }}
           >
-            {downloading ? '⏳ 生成中...' : '📥 下载审稿报告'}
+            {downloading ? '⏳ 生成中...' : report.llm_success === false ? '❌ LLM 审稿失败，无法下载' : '📥 下载审稿报告'}
           </button>
           {downloadError && (
             <p style={{ marginTop: 10, fontSize: 13, color: 'var(--danger)', background: 'var(--danger-bg)', padding: '8px 14px', borderRadius: 8 }}>
               ❌ {downloadError}
             </p>
+          )}
+          {report.llm_success === false && report.error_messages?.length && (
+            <div style={{ marginTop: 12, fontSize: 13, color: 'var(--danger)', background: 'var(--danger-bg)', padding: '10px 14px', borderRadius: 8 }}>
+              <strong>❌ 审稿失败原因：</strong>
+              <ul style={{ margin: '6px 0 0 0', paddingLeft: 20 }}>
+                {report.error_messages.map((msg, i) => (
+                  <li key={i}>{msg}</li>
+                ))}
+              </ul>
+            </div>
           )}
         </div>
       </div>
@@ -196,7 +242,7 @@ function ReviewResultPage({ report }: Props) {
               </div>
             ) : (
               report.summary.strengths.map((s, i) => (
-                <div key={i} className="list-item strength">{s}</div>
+                <div key={i} className="list-item strength">{formatBilingual(s)}</div>
               ))
             )}
           </div>
@@ -208,40 +254,15 @@ function ReviewResultPage({ report }: Props) {
               </div>
             ) : (
               report.summary.weaknesses.map((w, i) => (
-                <div key={i} className="list-item weakness">{w}</div>
+                <div key={i} className="list-item weakness">{formatBilingual(w)}</div>
               ))
             )}
           </div>
         </>
       )}
 
-      {/* ── Tab 1: 规则检查 ────────────────────────── */}
+      {/* ── Tab 1: 逻辑连贯性审查 ─────────────────── */}
       {activeTab === 1 && (
-        <div className="card">
-          <div className="card-title">📋 规则检查结果</div>
-          {report.rules.length === 0 ? (
-            <div className="empty-state">
-              <div className="empty-state-icon">✅</div>
-              <p>未发现规则检查问题</p>
-            </div>
-          ) : (
-            report.rules.map((r, i) => (
-              <div key={i} className={`rule-item ${RULE_CLASS[r.severity] ?? 'rule-info'}`}>
-                <div className="rule-title">
-                  <span className={`badge ${BADGE_CLASS[r.severity] ?? 'badge-info'}`}>{r.severity}</span>
-                  {' '}{RULE_LABEL[r.category] ?? r.category} · {r.title}
-                  {r.location && <> <span className="rev-location">📍{r.location}</span></>}
-                </div>
-                <div className="rule-desc">{r.description}</div>
-                {r.suggestion && <div className="rule-suggestion">💡 {r.suggestion}</div>}
-              </div>
-            ))
-          )}
-        </div>
-      )}
-
-      {/* ── Tab 2: 逻辑连贯性审查 ─────────────────── */}
-      {activeTab === 2 && (
         <div className="card">
           <div className="card-title">🔍 逻辑连贯性审查</div>
           {!report.logical_review ? (
@@ -251,11 +272,27 @@ function ReviewResultPage({ report }: Props) {
             </div>
           ) : (
             <>
+              {/* 研究主题分析 */}
+              {report.logical_review.research_theme && (
+                <div className="card" style={{ marginBottom: 16 }}>
+                  <div className="card-title">📌 研究主题分析</div>
+                  <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.8 }}>{formatBilingual(report.logical_review.research_theme)}</div>
+                </div>
+              )}
+
+              {/* 研究路线图 / 整体框架 */}
+              {report.logical_review.research_framework && (
+                <div className="card" style={{ marginBottom: 16 }}>
+                  <div className="card-title">🗺️ 研究路线图 / 整体框架</div>
+                  <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.8 }}>{formatBilingual(report.logical_review.research_framework)}</div>
+                </div>
+              )}
+
               {/* 总体评价 */}
               {report.logical_review.overall_assessment && (
                 <div className="card" style={{ marginBottom: 16 }}>
                   <div className="card-title">总体评价</div>
-                  <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.8 }}>{report.logical_review.overall_assessment}</div>
+                  <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.8 }}>{formatBilingual(report.logical_review.overall_assessment)}</div>
                 </div>
               )}
 
@@ -264,7 +301,7 @@ function ReviewResultPage({ report }: Props) {
                 <div className="card" style={{ marginBottom: 16 }}>
                   <div className="card-title">📑 章节与段落逻辑</div>
                   {report.logical_review.section_logic.map((s, i) => (
-                    <div key={i} className="list-item" style={{ whiteSpace: 'pre-wrap', lineHeight: 1.8 }}>{s}</div>
+                    <div key={i} className="list-item" style={{ whiteSpace: 'pre-wrap', lineHeight: 1.8 }}>{formatBilingual(s)}</div>
                   ))}
                 </div>
               )}
@@ -274,7 +311,7 @@ function ReviewResultPage({ report }: Props) {
                 <div className="card" style={{ marginBottom: 16 }}>
                   <div className="card-title">⚖️ 论点与论据逻辑</div>
                   {report.logical_review.argument_logic.map((a, i) => (
-                    <div key={i} className="list-item" style={{ whiteSpace: 'pre-wrap', lineHeight: 1.8 }}>{a}</div>
+                    <div key={i} className="list-item" style={{ whiteSpace: 'pre-wrap', lineHeight: 1.8 }}>{formatBilingual(a)}</div>
                   ))}
                 </div>
               )}
@@ -290,8 +327,8 @@ function ReviewResultPage({ report }: Props) {
                         {' '}{ISSUE_TYPE_LABEL[ci.issue_type] ?? ci.issue_type}
                         {ci.location && <><span className="rev-location">📍{ci.location}</span></>}
                       </div>
-                      <div className="rule-desc">{ci.description}</div>
-                      {ci.suggestion && <div className="rule-suggestion">💡 {ci.suggestion}</div>}
+                      <div className="rule-desc">{formatBilingual(ci.description)}</div>
+                      {ci.suggestion && <div className="rule-suggestion">💡 {formatBilingual(ci.suggestion)}</div>}
                     </div>
                   ))}
                 </div>
@@ -302,12 +339,14 @@ function ReviewResultPage({ report }: Props) {
                 <div className="card" style={{ marginBottom: 16 }}>
                   <div className="card-title">🎯 主题一致性评价</div>
                   {report.logical_review.theme_consistency.map((t, i) => (
-                    <div key={i} className="list-item" style={{ whiteSpace: 'pre-wrap', lineHeight: 1.8 }}>{t}</div>
+                    <div key={i} className="list-item" style={{ whiteSpace: 'pre-wrap', lineHeight: 1.8 }}>{formatBilingual(t)}</div>
                   ))}
                 </div>
               )}
 
-              {report.logical_review.overall_assessment === '' &&
+              {(!report.logical_review.research_theme || report.logical_review.research_theme === '') &&
+               (!report.logical_review.research_framework || report.logical_review.research_framework === '') &&
+               report.logical_review.overall_assessment === '' &&
                report.logical_review.section_logic.length === 0 &&
                report.logical_review.argument_logic.length === 0 &&
                report.logical_review.coherence_issues.length === 0 &&
@@ -321,8 +360,8 @@ function ReviewResultPage({ report }: Props) {
         </div>
       )}
 
-      {/* ── Tab 3: AI 审阅 ─────────────────────────── */}
-      {activeTab === 3 && (
+      {/* ── Tab 2: AI 审阅 ─────────────────────────── */}
+      {activeTab === 2 && (
         <div className="card">
           <div className="card-title">🤖 AI 审阅意见</div>
           {report.ai_reviews.length === 0 ? (
@@ -334,16 +373,18 @@ function ReviewResultPage({ report }: Props) {
             report.ai_reviews.map((r, i) => (
               <div key={i} className="review-item">
                 <div className="review-section">📑 {r.section}</div>
-                <div className="review-comment">{r.review_comment}</div>
+                <div className="review-comment" style={{ whiteSpace: 'pre-wrap' }}>
+                  {formatBilingual(r.review_comment)}
+                </div>
                 {r.original_text && (
                   <div className="review-original">
                     <strong>原文片段</strong>
-                    {r.original_text.slice(0, 300)}
+                    <span style={{ whiteSpace: 'pre-wrap', fontSize: 13 }}>{r.original_text.slice(0, 300)}</span>
                   </div>
                 )}
                 {r.suggestion && (
                   <div className="review-suggestion">
-                    💡 {r.suggestion}
+                    💡 {formatBilingual(r.suggestion)}
                   </div>
                 )}
               </div>
@@ -352,8 +393,8 @@ function ReviewResultPage({ report }: Props) {
         </div>
       )}
 
-      {/* ── Tab 4: 修订痕迹 ────────────────────────── */}
-      {activeTab === 4 && (
+      {/* ── Tab 3: 修订痕迹 ────────────────────────── */}
+      {activeTab === 3 && (
         <div className="card">
           <div className="card-title">✍️ 修订痕迹</div>
           {report.revisions.length === 0 ? (
@@ -378,8 +419,8 @@ function ReviewResultPage({ report }: Props) {
         </div>
       )}
 
-      {/* ── Tab 5: 自动补全 ────────────────────────── */}
-      {activeTab === 5 && (
+      {/* ── Tab 4: 自动补全 ────────────────────────── */}
+      {activeTab === 4 && (
         <div className="card">
           <div className="card-title">📝 自动补全内容</div>
           {report.completions.length === 0 ? (
@@ -402,15 +443,70 @@ function ReviewResultPage({ report }: Props) {
                     style={{ width: `${c.confidence * 100}%` }}
                   />
                 </div>
-                <div className="completion-content">{c.generated_content}</div>
+                <div className="completion-content">{formatBilingual(c.generated_content)}</div>
               </div>
             ))
           )}
         </div>
       )}
 
-      {/* ── Tab 6: 推荐期刊 ────────────────────────── */}
+      {/* ── Tab 5: 论文润色 ──────────────────────── */}
+      {activeTab === 5 && (
+        <div className="card">
+          <div className="card-title">✨ 论文润色（SCI 级学术文稿）</div>
+
+          {/* 🆕 人工审核提示 */}
+          <div style={{
+            background: 'var(--warning-bg)',
+            border: '1px solid var(--warning-border)',
+            borderRadius: 8,
+            padding: '12px 16px',
+            marginBottom: 16,
+            fontSize: 13,
+            color: '#92400e',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+          }}>
+            <span style={{ fontSize: 18 }}>⚠️</span>
+            <span>
+              <strong>审核提醒：</strong>
+              润色内容由 AI 自动生成，建议您快速浏览全文，检查是否存在异常重复词、截断或不连贯之处，再进行下载使用。
+            </span>
+          </div>
+
+          {!report.polished_paper ? (
+            <div className="empty-state">
+              <div className="empty-state-icon">✨</div>
+              <p>暂无润色结果 — 可能是 LLM 未能生成润色内容</p>
+            </div>
+          ) : (
+            <div className="polished-text" style={{ whiteSpace: 'pre-wrap', lineHeight: 1.8 }}>
+              {formatBilingual(report.polished_paper)}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Tab 6: 文献综述 ──────────────────────── */}
       {activeTab === 6 && (
+        <div className="card">
+          <div className="card-title">📖 文献综述</div>
+          {!report.literature_review ? (
+            <div className="empty-state">
+              <div className="empty-state-icon">📖</div>
+              <p>暂无文献综述结果 — 可能是 LLM 未能生成综述内容</p>
+            </div>
+          ) : (
+            <div className="lit-review-text" style={{ whiteSpace: 'pre-wrap', lineHeight: 1.8 }}>
+              {formatBilingual(report.literature_review)}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Tab 7: 推荐期刊 ────────────────────────── */}
+      {activeTab === 7 && (
         <div className="card">
           <div className="card-title">📚 推荐投稿期刊（Top 10）</div>
           {journalsLoading ? (
@@ -442,61 +538,6 @@ function ReviewResultPage({ report }: Props) {
                 <p className="journal-reason">{j.reason}</p>
               </div>
             ))
-          )}
-        </div>
-      )}
-
-      {/* ── Tab 7: 论文润色 ──────────────────────── */}
-      {activeTab === 7 && (
-        <div className="card">
-          <div className="card-title">✨ 论文润色（SCI 级学术文稿）</div>
-
-          {/* 🆕 人工审核提示 */}
-          <div style={{
-            background: 'var(--warning-bg)',
-            border: '1px solid var(--warning-border)',
-            borderRadius: 8,
-            padding: '12px 16px',
-            marginBottom: 16,
-            fontSize: 13,
-            color: '#92400e',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-          }}>
-            <span style={{ fontSize: 18 }}>⚠️</span>
-            <span>
-              <strong>审核提醒：</strong>
-              润色内容由 AI 自动生成，建议您快速浏览全文，检查是否存在异常重复词、截断或不连贯之处，再进行下载使用。
-            </span>
-          </div>
-
-          {!report.polished_paper ? (
-            <div className="empty-state">
-              <div className="empty-state-icon">✨</div>
-              <p>暂无润色结果 — 可能是 LLM 未能生成润色内容</p>
-            </div>
-          ) : (
-            <div className="polished-text" style={{ whiteSpace: 'pre-wrap', lineHeight: 1.8 }}>
-              {report.polished_paper}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ── Tab 8: 文献综述 ──────────────────────── */}
-      {activeTab === 8 && (
-        <div className="card">
-          <div className="card-title">📖 文献综述</div>
-          {!report.literature_review ? (
-            <div className="empty-state">
-              <div className="empty-state-icon">📖</div>
-              <p>暂无文献综述结果 — 可能是 LLM 未能生成综述内容</p>
-            </div>
-          ) : (
-            <div className="lit-review-text" style={{ whiteSpace: 'pre-wrap', lineHeight: 1.8 }}>
-              {report.literature_review}
-            </div>
           )}
         </div>
       )}

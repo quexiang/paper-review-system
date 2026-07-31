@@ -32,18 +32,52 @@ _SYSTEM_PROMPT = """\
 请直接输出文献综述正文：
 """
 
+_SYSTEM_PROMPT_BILINGUAL = """\
+You are a senior academic researcher. Based on the provided paper, generate a comprehensive academic literature review related to the paper's topic.
 
-async def generate_literature_review(full_text: str, llm_client: object, model: str) -> str:
+Literature review requirements:
+1. **Topic Identification**: Extract core research topics, keywords, and research fields from the paper
+2. **Field Review**: Review the current research status and development trajectory around the core topic
+3. **Categorized Organization**: Categorize related literature by research topic or methodology, with 300-500 words per category
+4. **Research Gaps**: Point out current research shortcomings and how this paper fills the gaps
+5. **Academic Standards**: Use formal academic language, citation format as [number]
+
+Literature review structure:
+- **Introduction**: Briefly introduce the research field background and significance (about 200 words)
+- **Theme One Review**: Progress and current status of the first major research direction
+- **Theme Two Review**: Progress and current status of the second major research direction
+- **Theme Three Review**: Progress and current status of the third major research direction
+- **Research Gaps and Outlook**: Identify limitations of existing research and highlight this paper's research value
+- **Conclusion**: Summarize the full text and look forward to future research directions
+
+Important:
+- Output ONLY the literature review body text, no title, preface, or extra explanation
+- Review content must be closely related to the paper's topic, not generic
+- Use formal academic language, at least 2000 words
+- Organize content logically and coherently
+
+IMPORTANT - BILINGUAL OUTPUT:
+After outputting the literature review in English, append the Chinese translation using the exact delimiter "--- 中文翻译 ---" on its own line.
+The format must be: [English literature review text]\n\n--- 中文翻译 ---\n\n[Chinese translation of the literature review]
+Both versions must be complete and accurate.
+
+Please output the literature review:
+"""
+
+
+async def generate_literature_review(full_text: str, llm_client: object, model: str, is_english: bool = False) -> str:
     """基于论文全文生成文献综述"""
     # 截取论文内容，截断过长内容
     text_preview = full_text[:20000]
     model_to_use = getattr(llm_client, "_model", model or "gpt-4o")
+    # 英文稿件使用双语 prompt
+    system_prompt = _SYSTEM_PROMPT_BILINGUAL if is_english else _SYSTEM_PROMPT
 
     try:
         resp = await asyncio.wait_for(
             llm_client.chat.completions.create(
                 model=model_to_use,
-                messages=[{"role": "system", "content": _SYSTEM_PROMPT}, {"role": "user", "content": text_preview}],
+                messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": text_preview}],
                 temperature=0.7,
                 max_tokens=8192,
             ),
