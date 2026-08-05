@@ -125,10 +125,11 @@ def _create_llm(model_name: str | None = None) -> AsyncOpenAI:
 # ── 全局状态 ───────────────────────────────────────────
 
 _history: list[HistoryRecord] = []
-_reports: dict[str, CompletionReport] = {}  # 存储完整报告供下载
-_original_texts: dict[str, str] = {}         # 存储原始论文文本
-_journals: dict[str, list[dict]] = {}         # 存储 LLM 推荐的期刊
-_models_used: dict[str, str] = {}              # 存储每个审稿使用的大模型名称
+_reports: dict[str, CompletionReport] = {}         # 存储完整报告供下载
+_original_texts: dict[str, str] = {}               # 存储原始论文文本
+_original_files: dict[str, tuple[bytes, str]] = {} # 存储原始文件字节和文件名（含扩展名）
+_journals: dict[str, list[dict]] = {}              # 存储 LLM 推荐的期刊
+_models_used: dict[str, str] = {}                   # 存储每个审稿使用的大模型名称
 
 #PDF解析函数
 def _extract_pdf_text(raw_bytes: bytes) -> str:
@@ -580,17 +581,16 @@ def _build_ai_review_prompt(
     bilingual_hint = ""
     if is_english:
         bilingual_hint = (
-            "\n\n## 双语输出要求（重要）\n"
-            "以下字段必须**同时提供英文原文和中文翻译**：summary 下的 strengths、weaknesses、overall_assessment、recommendation；review_comment；logical_review 下所有字段（research_theme、research_framework、section_logic、argument_logic、coherence_issues.description、coherence_issues.suggestion、theme_consistency、overall_assessment、knowledge_graph.summary）；completions 下 generated_content。\n"
-            "格式：每个字段先写英文，空一行，加 `--- 中文翻译 ---`，再写中文。\n"
-            "示例 review_comment：\n"
-            "\"[English review comment text...]\n\n--- 中文翻译 ---\n\n[中文审阅意见]\"\n"
-            "示例 strengths 数组：\n"
-            "\"strengths\": [\"[English item...]\n\n--- 中文翻译 ---\n\n[中文]\", ...]\n"
-            "示例 knowledge_graph.summary：\n"
-            "\"summary\": \"[English summary...]\n\n--- 中文翻译 ---\n\n[中文总结]\"\n"
-            "注意：nodes 和 edges 数组中的 id、label、type 等内部字段**只用英文**，不需要翻译。\n"
-            "注意：journals、revisions、section（章节名）、issue_type、severity 等内部字段**只用英文**。\n"
+            "\n\n## 双语输出要求\n"
+            "以下字段必须**同时提供英文原文和中文翻译**：logical_review 下所有字段（research_theme、research_framework、section_logic、argument_logic、coherence_issues.description、coherence_issues.suggestion、theme_consistency、overall_assessment、knowledge_graph.summary）。\n"
+            "格式：在 JSON 字符串值内，用 `\\n\\n--- 中文翻译 ---\\n\\n`（两个字符）作为分隔符，不要使用字面量换行。\n"
+            "示例 research_theme：\n"
+            "\"research_theme\": \"[English analysis...]\\n\\n--- 中文翻译 ---\\n\\n[中文分析]\"\n"
+            "示例 section_logic：\n"
+            "\"section_logic\": [\"[English item 1...]\\n\\n--- 中文翻译 ---\\n\\n[中文条目 1]\"]\n"
+            "注意：JSON 字符串中**绝对不要使用字面量换行符**（即不要按 Enter），所有换行必须写成 `\\n` 两个字符。\n"
+            "以下字段**只用英文**（不需要翻译）：summary（strengths、weaknesses、overall_score、recommendation）、ai_reviews（section、review_comment、suggestion）、revisions、completions、journals、knowledge_graph.nodes、knowledge_graph.edges 的内部字段。\n"
+            "请确保 JSON 格式合法，不要省略任何引号、逗号、花括号或方括号。\n"
             "请确保中文翻译准确、流畅，不遗漏关键信息。\n"
         )
 
@@ -606,6 +606,9 @@ def _build_ai_review_prompt(
 
 ## 重要要求
 你必须返回一个完整的 JSON 对象，包含以下全部字段。每项内容都必须**详尽、具体、有深度**，不能敷衍了事或泛泛而谈。
+
+**JSON 格式要求：** 返回的必须是合法的 JSON。字符串中的换行必须使用 `\n`（两个字符：反斜杠+n），**不要使用字面量换行符**。双语字段中的 `--- 中文翻译 ---` 分隔符必须作为字符串的一部分包含在 JSON 值内（使用 `\n\n--- 中文翻译 ---\n\n` 格式）。
+
 {bilingual_hint}
 ### summary - 总体评价
 {{"overall_score": 0-100 整数, "strengths": ["优点1", "优点2", ...], "weaknesses": ["缺点1", "缺点2", ...], "recommendation": "accept|minor_revision|major_revision|reject"}}
@@ -1131,8 +1134,10 @@ async def _safe_lit_review(
 
 # ── 审阅流程（核心改造）───────────────────────────────────
 
-async def run_review(parsed: ParsedDocument, model_name: str | None = None) -> CompletionReport:
+async def run_review(parsed: ParsedDocument, model_name: str | None = None, review_id: str | None = None) -> CompletionReport:
     """完整的审稿流程：规则检查 → 并行执行（AI审阅、润色、综述）→ 组装报告"""
+    # 使用传入的 review_id 或生成新的
+    _review_id = review_id or str(uuid.uuid4())[:8]
     text = parsed.full_text
 
     # 1. 规则检查（同步，轻量）
@@ -1345,6 +1350,7 @@ async def run_review(parsed: ParsedDocument, model_name: str | None = None) -> C
 
     # 组装报告
     report = CompletionReport(
+        id=_review_id,
         file_name=parsed.file_name,
         status="completed",
         summary=ReviewSummary(
@@ -1376,6 +1382,7 @@ async def run_review(parsed: ParsedDocument, model_name: str | None = None) -> C
         for old in _history[:-10]:
             _reports.pop(old.id, None)
             _original_texts.pop(old.id, None)
+            _original_files.pop(old.id, None)
             _journals.pop(old.id, None)
             _models_used.pop(old.id, None)
         _history[:] = _history[-10:]
@@ -1444,6 +1451,8 @@ async def review(file: UploadFile = File(...), model: str | None = Form(default=
     _wc = len(text.split())
     if _wc < 200 and len(text) > 200:  # 中文文章 split 词数极少
         _wc = len(text.replace('\n', '').replace(' ', ''))
+    review_id = str(uuid.uuid4())[:8]
+
     parsed = ParsedDocument(
         file_name=file.filename or "unknown",
         sections=extract_sections(text),
@@ -1451,7 +1460,10 @@ async def review(file: UploadFile = File(...), model: str | None = Form(default=
         word_count=max(_wc, 1),
     )
 
-    report = await run_review(parsed, model_name=model)
+    # 保存原始文件，供历史下载
+    _original_files[review_id] = (raw, file.filename or "unknown")
+
+    report = await run_review(parsed, model_name=model, review_id=review_id)
     return report.model_dump()
 
 
@@ -1467,6 +1479,7 @@ def delete_history(review_id: str):
     _history = [r for r in _history if r.id != review_id]
     _reports.pop(review_id, None)
     _original_texts.pop(review_id, None)
+    _original_files.pop(review_id, None)
     _journals.pop(review_id, None)
     _models_used.pop(review_id, None)
     return {"ok": True}
@@ -1524,6 +1537,38 @@ def download_report(review_id: str):
     return Response(
         content=docx_bytes,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"
+        }
+    )
+
+
+@app.get("/api/download-original/{review_id}")
+def download_original_file(review_id: str):
+    """下载用户提交的原始稿件"""
+    from fastapi.responses import Response
+    from urllib.parse import quote
+
+    data = _original_files.get(review_id)
+    if data is None:
+        return JSONResponse(status_code=404, content={"error": "原始稿件不存在"})
+    raw_bytes, original_filename = data
+    ext = Path(original_filename or "").suffix.lower()
+    if ext:
+        filename = f"{original_filename.rsplit('.', 1)[0]}-original{ext}"
+    else:
+        filename = f"{original_filename or 'unknown'}-original"
+    encoded_filename = quote(filename)
+
+    media_types = {
+        ".pdf": "application/pdf",
+        ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".txt": "text/plain",
+        ".md": "text/markdown",
+    }
+    return Response(
+        content=raw_bytes,
+        media_type=media_types.get(ext, "application/octet-stream"),
         headers={
             "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"
         }

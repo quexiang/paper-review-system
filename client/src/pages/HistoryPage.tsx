@@ -21,6 +21,7 @@ function scoreClass(score: number): string {
 
 function HistoryPage({ records }: Props) {
   const [downloading, setDownloading] = React.useState<string | null>(null);
+  const [downloadingOriginal, setDownloadingOriginal] = React.useState<string | null>(null);
   const [downloadError, setDownloadError] = React.useState('');
 
   const handleDownload = async (id: string) => {
@@ -61,6 +62,39 @@ function HistoryPage({ records }: Props) {
     }
   };
 
+  const handleDownloadOriginal = async (id: string, fileName: string) => {
+    setDownloadingOriginal(id);
+    setDownloadError('');
+    try {
+      const res = await fetch(`/api/download-original/${id}`);
+      if (!res.ok) {
+        if (res.status === 404) {
+          throw new Error('原始稿件不存在');
+        }
+        throw new Error(`下载失败（HTTP ${res.status}）`);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const disposition = res.headers.get('Content-Disposition');
+      let filename = fileName.includes('.') ? fileName.split('.').slice(0, -1).join('.') + '-original.' + fileName.split('.').pop() : fileName + '-original';
+      if (disposition) {
+        const match = disposition.match(/filename\*=UTF-8''(.+)/);
+        if (match) filename = decodeURIComponent(match[1]);
+      }
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      setDownloadError(e.message || '下载失败，请重试');
+    } finally {
+      setDownloadingOriginal(null);
+    }
+  };
+
   return (
     <div className="card">
       <div className="card-title">📋 审稿历史（最近 10 篇）</div>
@@ -88,14 +122,24 @@ function HistoryPage({ records }: Props) {
                   {REC_TEXT[r.summary.recommendation] ?? r.summary.recommendation}
                 </span>
               </div>
-              <button
-                className="btn btn-download"
-                onClick={() => handleDownload(r.id)}
-                disabled={downloading === r.id}
-                style={{ marginLeft: 8 }}
-              >
-                {downloading === r.id ? '⏳ 生成中...' : '📥 下载'}
-              </button>
+              <div style={{ display: 'flex', alignItems: 'center' }}>
+                <button
+                  className="btn btn-download"
+                  onClick={() => handleDownload(r.id)}
+                  disabled={downloading === r.id}
+                  style={{ marginLeft: 8 }}
+                >
+                  {downloading === r.id ? '⏳ 生成中...' : '📥 下载审稿报告'}
+                </button>
+                <button
+                  className="btn btn-download"
+                  onClick={() => handleDownloadOriginal(r.id, r.file_name)}
+                  disabled={downloadingOriginal === r.id}
+                  style={{ marginLeft: 4 }}
+                >
+                  {downloadingOriginal === r.id ? '⏳ 生成中...' : '📄 原始稿件'}
+                </button>
+              </div>
             </div>
           ))}
           {downloadError && (
