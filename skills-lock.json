@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "skills": {
+    "research": {
+      "source": "mattpocock/skills",
+      "sourceType": "github",
+      "skillPath": "skills/engineering/research/SKILL.md",
+      "computedHash": "c8c1cba327a6f824b554cd978079a3dadd7406d73174f8fb9bfef58824691970"
+    },
+    "rw-research-referee": {
+      "source": "ozrwayne/rw-research-skill",
+      "sourceType": "github",
+      "skillPath": "skills/rw-research-referee/SKILL.md",
+      "computedHash": "afb4b3ec412d532b1ce9518885effc10c2a3159671f76b1b2dcc99f25bdc6b22"
+    }
+  }
+}

@@ -7,6 +7,9 @@ server/*.egg-info/
 __pycache__/
 *.pyc
 
+#log
+playwright‑mcp/*.log
+
 # Environment
 .env
 

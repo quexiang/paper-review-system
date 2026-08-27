@@ -13,7 +13,10 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 from dotenv import load_dotenv
-load_dotenv()  # 加载 .env 文件，使 OPENAI_API_KEY 等环境变量生效
+from pathlib import Path
+# .env 在项目根目录，不是 server/ 下
+_env_path = Path(__file__).resolve().parent.parent / ".env"
+load_dotenv(dotenv_path=_env_path)  # 加载 .env 文件，使 OPENAI_API_KEY 等环境变量生效
 
 from fastapi import FastAPI, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
@@ -58,7 +61,7 @@ _KNOWN_MODELS: list[str] = [
 # 自定义模型端点（非默认 base_url 的模型）
 # API key 优先从环境变量 LAN_MODEL_API_KEY 读取
 _LAN_KEY = os.getenv("LAN_MODEL_API_KEY", "sk-litellmXa304304")
-_LAN_URL = "http://59.79.241.152:7000/v1"
+_LAN_URL = "http://127.0.0.1:7000"
 _CUSTOM_ENDPOINTS: dict[str, tuple[str, str]] = {
     "claude-sonnet-4-5-20251001": (_LAN_URL, _LAN_KEY),
     "claude-opus-4-5-20251001":   (_LAN_URL, _LAN_KEY),
@@ -83,8 +86,46 @@ def _discover_ollama_models() -> list[str]:
         return list(_KNOWN_MODELS)
 
 
+def _check_proxy_available(url: str, timeout: float = 3.0) -> bool:
+    """检查代理端点是否可访问（优先使用 OpenAI 兼容的 /v1/models 端点）"""
+    import urllib.request
+    # 1. 尝试 /health
+    try:
+        req = urllib.request.Request(f"{url}/health", method="GET")
+        resp = urllib.request.urlopen(req, timeout=timeout)
+        return 200 <= resp.status < 400
+    except Exception:
+        pass
+    # 2. 尝试 /v1/health
+    try:
+        if not url.endswith("/v1"):
+            req = urllib.request.Request(f"{url}/v1/health", method="GET")
+            resp = urllib.request.urlopen(req, timeout=timeout)
+            return 200 <= resp.status < 400
+    except Exception:
+        pass
+    # 3. 尝试 /v1/models（OpenAI 兼容标准端点，需要 API key）
+    try:
+        api_key = _LAN_KEY if _LAN_KEY else "test-key"
+        req = urllib.request.Request(f"{url}/v1/models", method="GET")
+        req.add_header("Authorization", f"Bearer {api_key}")
+        resp = urllib.request.urlopen(req, timeout=timeout)
+        return 200 <= resp.status < 400
+    except Exception:
+        pass
+    # 4. 最后尝试根路径
+    try:
+        req = urllib.request.Request(url, method="GET")
+        resp = urllib.request.urlopen(req, timeout=timeout)
+        return 200 <= resp.status < 400
+    except Exception:
+        return False
+
+
 def _get_available_models(force_refresh: bool = False) -> list[dict]:
-    """返回可用模型列表（带缓存，缓存有效期 5 分钟）"""
+    """返回可用模型列表（带缓存，缓存有效期 5 分钟）。
+    默认只做轻量探测：检查自定义代理端点是否可达，不可达则不返回该模型。
+    """
     import time
     global _models_cache, _models_cache_time
     now = time.time()
@@ -96,8 +137,35 @@ def _get_available_models(force_refresh: bool = False) -> list[dict]:
         "claude-opus-4-5-20251001": "Claude Opus 4.5（局域网，最强推理）",
         "claude-haiku-4-5-20251001": "Claude Haiku 4.5（局域网，极速响应）",
     }
-    models = _discover_ollama_models()
-    result = [{"name": m, "desc": descriptions.get(m, f"模型 {m}")} for m in models]
+
+    # 收集每个模型的代理端点
+    model_endpoints: dict[str, str] = {}
+    for model_name, (endpoint, _key) in _CUSTOM_ENDPOINTS.items():
+        model_endpoints[model_name] = endpoint
+
+    # 也合并 Ollama 本地模型
+    ollama_models = _discover_ollama_models()
+
+    result: list[dict] = []
+    seen: set[str] = set()
+
+    # 先检查自定义代理端点的可用性
+    for model_name, endpoint in model_endpoints.items():
+        if model_name in seen:
+            continue
+        seen.add(model_name)
+        if _check_proxy_available(endpoint):
+            result.append({"name": model_name, "desc": descriptions.get(model_name, f"模型 {model_name}")})
+        else:
+            print(f"[Models] 代理 {endpoint} 不可达，跳过模型 {model_name}", flush=True)
+
+    # Ollama 本地模型直接包含（本地可用）
+    for m in ollama_models:
+        if m not in seen:
+            seen.add(m)
+            if m not in descriptions:
+                result.append({"name": m, "desc": f"模型 {m}"})
+
     _models_cache = result
     _models_cache_time = now
     return result
@@ -114,6 +182,9 @@ def _create_llm(model_name: str | None = None) -> AsyncOpenAI:
         client._model = target_model  # type: ignore
         return client
 
+    api_key = os.getenv("OPENAI_API_KEY", "NOT_SET")[:10]
+    base_url = os.getenv("OPENAI_BASE_URL", "NOT_SET")
+    print(f"[LLM] Creating client: key={api_key}..., base_url={base_url}", flush=True)
     client = AsyncOpenAI(
         api_key=os.getenv("OPENAI_API_KEY", ""),
         base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
@@ -595,7 +666,12 @@ def _build_ai_review_prompt(
         )
 
     return f"""\
-你是一位资深的学术期刊审稿人，擅长全面、深入地评审学术论文。请对以下论文进行详尽的审阅，返回尽可能全面、完整的审阅结果（纯 JSON，不要使用代码块）。
+你是一位资深的学术期刊审稿人，擅长全面、深入地评审学术论文。请对以下论文进行审阅，返回详尽的审阅结果（纯 JSON，不要使用代码块）。
+
+**重点权重分配（严格遵守）：**
+- 🔬 **创新性/ Novelty（最高权重）**：重点评估论文的创新性，包括研究问题、方法、实验设计、结论等方面的原创贡献。
+- 🧠 **逻辑性/ Logic（高权重）**：深度审查研究逻辑，包括论证链条、因果关系、推理严密性、结论合理性。
+- 📐 章节/格式/段落长度（最低权重）：除非存在**严重**缺失或格式问题，否则**不要**在 weaknesses 或建议中提及章节不完整、段落过长、格式不规范等次要问题。
 
 ## 规则检查结果
 {rule_lines}
@@ -612,16 +688,19 @@ def _build_ai_review_prompt(
 {bilingual_hint}
 ### summary - 总体评价
 {{"overall_score": 0-100 整数, "strengths": ["优点1", "优点2", ...], "weaknesses": ["缺点1", "缺点2", ...], "recommendation": "accept|minor_revision|major_revision|reject"}}
-要求：strengths 至少 4 条，weaknesses 至少 4 条，每条都要具体针对论文内容。
+要求：strengths 至少 4 条，weaknesses 至少 4 条，每条都要具体针对论文内容。**重点审查：创新性（研究问题的新颖性、方法的原创性、结论的贡献）和逻辑性（论证链条是否严密、因果关系是否成立、推理是否合理）。除非存在严重问题，不要在 weaknesses 中提及章节缺失、格式问题或段落长短。**
 
 ### ai_reviews - 逐章节 AI 审阅意见（至少 5 条）
 每条格式：{{"section": "章节名", "review_comment": "详尽的审阅意见（≥200字）", "original_text": "原文关键片段（可选）", "suggestion": "具体的修改建议（≥50字）"}}
+**审阅重点：创新性贡献和逻辑严密性，忽略格式和章节完整性等次要问题。**
 
 ### revisions - 修订痕迹（至少 8 条）
 每条格式：{{"revision_type": "insertion|deletion|modification", "original_text": "原文（删除/修改时填写）", "new_text": "修改后的内容", "location": "位置描述", "rationale": "修改理由"}}
+**修订重点：提升创新性表达和逻辑严密性，不要为格式或章节完整性提出修订建议。**
 
 ### completions - 自动补全内容（至少 2 条，如果章节完整则生成内容补充建议）
 每条格式：{{"section": "章节名", "generated_content": "补充内容草稿（≥300字）", "confidence": 0.5-0.9}}
+**补全重点：如果存在内容不足，优先补充能增强创新性论述和逻辑链条的内容。不要为缺少的格式性章节生成补全。**
 
 ### journals - 推荐期刊 Top 10
 每条格式：{{"name": "期刊/会议全称", "level": "CCF-A/B/C 或 SCI Q1/Q2/Q3", "match": "匹配度百分比", "reason": "推荐理由（≥50字）"}}
@@ -995,120 +1074,14 @@ async def _safe_polish(
         # 1. 清洗不可见字符
         text = text.replace('\xad', '')  # 软连字符
         text = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F]', '', text)  # 控制字符
+        text = re.sub(r'\n{3,}', '\n\n', text).strip()
 
-        # 2. 定义正文行检测函数
-        def is_likely_text(line: str) -> bool:
-            """
-            安全版：宁可放过，不可错杀。
-            只有确定是图表标签（轴刻度、图例、单位标识）才返回 False。
-            """
-            stripped = line.strip()
-            if not stripped:
-                return False
-
-            # ── 第1层：硬拦截（这些 100% 不是正文） ──
-
-            # ① 纯数字行（坐标轴刻度：0, 5, 10, 1000...）
-            if re.match(r'^[\d\s,\.]+$', stripped):
-                return False
-
-            # ② 以 # 开头的图标题/注释
-            if stripped.startswith('#'):
-                return False
-
-            # ③ 纯单位标签（如 "Throughput (requests/second)" 单独一行）
-            #    只拦截这种短小的、括号包裹单位的行
-            if re.search(r'^[A-Za-z\s]+\([a-z]+/[a-z]+\)$', stripped):
-                return False
-            if re.search(r'km\^2|hours?|seconds?|requests?/s', stripped, re.I) and len(stripped) < 30:
-                return False
-
-            # ④ 明确的图表引用（Figure / Table / Fig. / Tab.）
-            if re.search(r'\b(Figure|Table|Fig\.|Tab\.)\s*\d+', stripped, re.IGNORECASE):
-                return False
-
-            # ── 第2层：只要有一点“正文痕迹”，立即放行 ──
-
-            # ① 包含中文字符（中文论文的标题/段落，放行）
-            if re.search(r'[\u4e00-\u9fff]', stripped):
-                return True
-
-            # ② 句子长度 > 40 字符（大概率是完整句子，放行）
-            if len(stripped) > 40:
-                return True
-
-            # ③ 包含学术关键词（动词/名词）（放行，避免误杀 "Deep Learning" 等）
-            academic_keywords = [
-                'analysis', 'result', 'show', 'indicate', 'demonstrate',
-                'provide', 'suggest', 'approach', 'method', 'data',
-                'study', 'model', 'system', 'evaluate', 'develop', 'propose',
-                'learning', 'mining', 'classification', 'recognition', 'extraction',
-                'framework', 'architecture', 'performance', 'evaluation', 'experiment'
-            ]
-            if any(kw in stripped.lower() for kw in academic_keywords):
-                return True
-
-            # ④ 行首是数字编号 + 空格 + 大写字母/中文（章节标题，放行）
-            if re.match(r'^\d+\.?\s+[A-Z\u4e00-\u9fff]', stripped):
-                return True
-
-            # ⑤ 全大写短词（缩写，如 "CNN", "LLM"）但包含在句子中？单独一行不放行
-            #    但如果长度 > 3 且只含大写字母，可能是缩写标题（如 "INTRODUCTION"），放行
-            if stripped.isupper() and len(stripped) >= 8:
-                return True
-
-            # ── 第3层：最后才拦截明显的图例 ──
-
-            # 拦截：2~4 个单词，全部首字母大写，长度 < 30，且不含数字和标点
-            # 例如 "Point Query", "Range Query", "Centralized IM", "Replicated NetCDF"
-            if re.match(r'^[A-Z][a-z]+(?: [A-Z][a-z]+){1,3}$', stripped) and len(stripped) < 30:
-                return False  # 拦截
-
-            # 兜底：如果以上都没命中，但长度 > 15，为了安全放行
-            if len(stripped) > 15:
-                return True
-
-            # 实在不确定的，放行（宁可多留，也不错杀）
-            return True
-
-        # 3. 按行分割并过滤
-        lines = text.split('\n')
-        filtered_lines = []
-        for line in lines:
-            stripped = line.strip()
-            if not stripped:
-                continue
-            # 跳过纯数字行（坐标轴刻度）
-            if re.match(r'^[\d\s,\.]+$', stripped):
-                continue
-            # 跳过页码行
-            if re.search(r'(Page|P\.?)\s*\d+\s*(of|/)\s*\d+', stripped, re.IGNORECASE):
-                continue
-            # 使用正文行检测
-            if not is_likely_text(line):
-                continue
-            filtered_lines.append(line)
-
-        # 4. 重新拼接
-        core_text = '\n'.join(filtered_lines)
-
-        # 5. 如果过滤后内容太少，fallback 到原文截断
-        if len(core_text) < 500:
-            print("[Polisher] 过滤后内容过少，使用原文截断")
-            core_text = text[:15000]
-
-        # 6. 压缩多余换行
-        core_text = re.sub(r'\n{3,}', '\n\n', core_text)
-        core_text = core_text.strip()
-
-        print(f"[Polisher] 输入压缩后长度: {len(core_text)} 字")
-
-        # 7. 调用润色（传入空列表表示直接润色全文）
-        return await _polish_paper(core_text, [], llm, model, is_english)
+        # 2. 使用全文 + 章节列表，由 polish_paper 按章节分别润色后拼接
+        print(f"[Polisher] 全文长度: {len(text)} 字，章节数: {len(sections)}")
+        return await _polish_paper(text, sections, llm, model, is_english)
     except Exception as e:
         print(f"[Polisher] 失败: {e}", file=sys.stderr)
         return None
-
 
 async def _safe_lit_review(
     text: str, llm: AsyncOpenAI, model: str, parsed: ParsedDocument, is_english: bool = False
@@ -1158,10 +1131,9 @@ async def run_review(parsed: ParsedDocument, model_name: str | None = None, revi
     llm = _create_llm(model_name)
     model_to_use = getattr(llm, "_model", model_name or "gpt-4o")
 
-    # ── 创建三个并行任务，使用信号量限制全局并发 ──
+    # LiteLLM 代理不支持并发，改为串行执行
     import time
-    # ── 创建三个并行任务，使用信号量限制全局并发 ──
-    sem = asyncio.Semaphore(3)# 不变
+    sem = asyncio.Semaphore(1)
 
     async def _limited_task(coro):  # 不变
         async with sem:
@@ -1199,16 +1171,14 @@ async def run_review(parsed: ParsedDocument, model_name: str | None = None, revi
 
     if not llm_success:
         print(f"[Review] ⚠️ LLM 审稿失败: {error_messages}")
-        # 所有 LLM 任务都失败 → 直接返回错误
-        if not any(isinstance(r, Exception) is False for r in (ai_result, polished_text, lit_review_text)):
-            from fastapi import JSONResponse
-            return JSONResponse(
-                status_code=502,
-                content={
-                    "error": "LLM 服务不可用，审稿无法完成",
-                    "messages": error_messages,
-                },
-            )
+        from fastapi import JSONResponse
+        return JSONResponse(
+            status_code=502,
+            content={
+                "error": "LLM 审稿失败，无法生成审稿报告",
+                "messages": error_messages,
+            },
+        )
 
     # 处理各任务结果
     ai_error = ai_result if isinstance(ai_result, Exception) else None
@@ -1427,9 +1397,9 @@ def health():
 
 
 @app.get("/api/models")
-def list_models():
-    """列出可用大模型"""
-    return _get_available_models()
+def list_models(force: bool = False):
+    """列出可用大模型（实时探测代理可用性，force=1 跳过缓存）"""
+    return _get_available_models(force_refresh=force)
 
 
 @app.post("/api/review")

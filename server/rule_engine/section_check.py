@@ -31,10 +31,10 @@ def check_sections(full_text: str) -> list[RuleReport]:
         if not found:
             reports.append(RuleReport(
                 category=RuleCategory.section,
-                severity=Severity.error,
-                title=f"缺少章节：{section_name}",
-                description=f"论文未包含「{section_name}」部分",
-                suggestion=f"请添加「{section_name}」章节，确保内容完整。",
+                severity=Severity.info,
+                title=f"可能缺少章节：{section_name}",
+                description=f"论文中未检测到「{section_name}」部分",
+                suggestion=f"如需完整论文结构，请添加「{section_name}」章节。",
             ))
 
     return reports

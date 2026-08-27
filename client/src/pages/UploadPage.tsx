@@ -12,11 +12,12 @@ interface UploadPageProps {
   selectedModel: string;
   availableModels: ModelInfo[];
   onModelChange: (model: string) => void;
+  checkingModels: boolean;
 }
 
 const SUPPORTED_TYPES = ['.pdf', '.docx', '.txt', '.md'];
 
-function UploadPage({ onSubmitted, selectedModel, availableModels, onModelChange }: UploadPageProps) {
+function UploadPage({ onSubmitted, selectedModel, availableModels, onModelChange, checkingModels }: UploadPageProps) {
   const [file, setFile] = useState<File | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const { review, loading, error, progress } = useReview();
@@ -72,15 +73,26 @@ function UploadPage({ onSubmitted, selectedModel, availableModels, onModelChange
         <div className="submit-area">
           <div className="model-selector">
             <label>🤖 审稿模型</label>
-            <select
-              value={selectedModel}
-              onChange={(e) => onModelChange(e.target.value)}
-              className="model-select"
-            >
-              {availableModels.map(m => (
-                <option key={m.name} value={m.name}>{m.desc}</option>
-              ))}
-            </select>
+            {checkingModels ? (
+              <div style={{ fontSize: 13, color: 'var(--gray-500)', padding: '8px 0' }}>
+                <span className="spinner" style={{ display: 'inline-block', marginRight: 8, verticalAlign: 'middle' }} />
+                正在探测本地代理可用性…
+              </div>
+            ) : availableModels.length === 0 ? (
+              <div style={{ fontSize: 13, color: 'var(--danger)', padding: '8px 0' }}>
+                未检测到可用代理。请确认 LiteLLM 代理已启动，且环境变量 OPENAI_BASE_URL 指向正确的端点。
+              </div>
+            ) : (
+              <select
+                value={selectedModel}
+                onChange={(e) => onModelChange(e.target.value)}
+                className="model-select"
+              >
+                {availableModels.map(m => (
+                  <option key={m.name} value={m.name}>{m.desc}</option>
+                ))}
+              </select>
+            )}
           </div>
 
           <button className="btn btn-primary" onClick={handleSubmit} disabled={!isSupported || loading}>

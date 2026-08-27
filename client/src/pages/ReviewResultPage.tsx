@@ -88,6 +88,8 @@ function ReviewResultPage({ report }: Props) {
   const [downloadError, setDownloadError] = useState('');
   const [journals, setJournals] = useState<JournalRec[]>([]);
   const [journalsLoading, setJournalsLoading] = useState(true);
+  // 挂载时检查 LLM 是否成功，失败则显示错误而非部分结果
+  const [_hasError, setHasError] = useState(report.llm_success === false);
 
   React.useEffect(() => {
     fetch(`/api/recommend-journals/${report.id}`)
@@ -218,6 +220,26 @@ function ReviewResultPage({ report }: Props) {
           )}
         </div>
       </div>
+
+      {/* ── LLM 失败错误提示 ───────────────────── */}
+      {_hasError && (
+        <div className="card error-card" style={{ marginBottom: 24 }}>
+          <div className="card-title" style={{ color: 'var(--danger)' }}>❌ 审稿失败</div>
+          <p style={{ fontSize: 14, color: 'var(--gray-700)' }}>
+            LLM 审稿服务异常，无法生成审稿报告。
+            {report.error_messages?.length ? (
+              <ul style={{ margin: '8px 0 0 0', paddingLeft: 20 }}>
+                {report.error_messages.map((msg, i) => (
+                  <li key={i}>{msg}</li>
+                ))}
+              </ul>
+            ) : null}
+          </p>
+          <p style={{ fontSize: 13, color: 'var(--gray-500)', marginTop: 8 }}>
+            请检查代理服务是否正常运行后，重新提交论文审稿。
+          </p>
+        </div>
+      )}
 
       {/* ── Tabs ──────────────────────────────────── */}
       <div className="tabs">
@@ -721,6 +743,11 @@ function KnowledgeGraphVisualization({
         .transition().duration(300)
         .attr('opacity', e => { const ed = e as unknown as KnowledgeGraphEdge; const src = ed.source as unknown as KnowledgeGraphNode; const tgt = ed.target as unknown as KnowledgeGraphNode; return (src.id === d.id || tgt.id === d.id) ? 1 : 0.1; });
     });
+
+    return () => {
+      simulation.stop();
+      svg.selectAll('*').remove();
+    };
   }, [nodes, edges]);
 
   return <svg ref={svgRef} style={{ width: '100%', height: '100%' }} />;

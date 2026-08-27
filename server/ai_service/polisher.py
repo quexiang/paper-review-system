@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
+
+from .retry import retry_with_backoff
 def has_repetitive_pattern(text: str, threshold: int = 20) -> bool:
     words = re.findall(r'\b\w+\b', text)
     if not words:
@@ -91,14 +94,12 @@ async def polish_section(
     section_text: str, llm_client: object, model: str, is_english: bool = False
 ) -> str:
     """润色单个论文章节，返回润色后的文本"""
-    import re
-    import asyncio
-
     model_to_use = getattr(llm_client, "_model", model or "gpt-4o")
     # 英文稿件使用双语 prompt
     system_prompt = _SYSTEM_PROMPT_BILINGUAL if is_english else _SYSTEM_PROMPT
-    try:
-        resp = await asyncio.wait_for(
+
+    async def _call_llm():
+        return await asyncio.wait_for(
             llm_client.chat.completions.create(
                 model=model_to_use,
                 messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": section_text}],
@@ -108,6 +109,9 @@ async def polish_section(
             ),
             timeout=600.0  # 10 分钟超时
         )
+
+    try:
+        resp = await retry_with_backoff(_call_llm, max_retries=3, base_delay=2.0, max_delay=30.0)
     except asyncio.TimeoutError:
         raise TimeoutError("章节润色超时（600秒）")
 

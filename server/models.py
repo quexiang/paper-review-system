@@ -189,3 +189,4 @@ class HistoryRecord(BaseModel):
     file_name: str
     timestamp: datetime
     summary: dict[str, Any]
+    llm_success: bool = True

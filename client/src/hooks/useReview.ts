@@ -18,16 +18,14 @@ export function useReview() {
       setProgress('正在执行规则检查...');
       const res = await fetch('/api/review', { method: 'POST', body: fd });
       if (!res.ok) {
-        // 尝试解析错误响应中的详细消息
+        let msg = `审稿失败 (HTTP ${res.status})`;
         try {
           const errData = await res.json();
           if (errData.error) {
-            throw new Error(errData.error + (errData.messages ? '\n' + errData.messages.join('\n') : ''));
+            msg = errData.error + (errData.messages?.length ? '\n' + errData.messages.join('\n') : '');
           }
-        } catch {
-          throw new Error(`审稿失败: ${res.status}`);
-        }
-        throw new Error(`审稿失败: ${res.status}`);
+        } catch { /* ignore */ }
+        throw new Error(msg);
       }
       setProgress('正在执行 AI 审阅...');
       const data: CompletionReport = await res.json();

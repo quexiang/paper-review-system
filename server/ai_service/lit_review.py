@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-import re
 import asyncio
+import re
+
+from .retry import retry_with_backoff
 
 _SYSTEM_PROMPT = """\
 你是一位资深的学术研究者。请根据提供的论文全文，生成一篇与该论文主题相关的学术文献综述。
@@ -73,8 +75,8 @@ async def generate_literature_review(full_text: str, llm_client: object, model: 
     # 英文稿件使用双语 prompt
     system_prompt = _SYSTEM_PROMPT_BILINGUAL if is_english else _SYSTEM_PROMPT
 
-    try:
-        resp = await asyncio.wait_for(
+    async def _call_llm():
+        return await asyncio.wait_for(
             llm_client.chat.completions.create(
                 model=model_to_use,
                 messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": text_preview}],
@@ -83,6 +85,9 @@ async def generate_literature_review(full_text: str, llm_client: object, model: 
             ),
             timeout=600.0
         )
+
+    try:
+        resp = await retry_with_backoff(_call_llm, max_retries=3, base_delay=2.0, max_delay=30.0)
     except asyncio.TimeoutError:
         print("[LitReview] 文献综述请求超时（600秒）")
         raise

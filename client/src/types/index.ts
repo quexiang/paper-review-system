@@ -107,4 +107,5 @@ export interface HistoryRecord {
   file_name: string;
   timestamp: Date;
   summary: { score: number; recommendation: string };
+  llm_success?: boolean;
 }
