@@ -9,6 +9,7 @@ __pycache__/
 
 #log
 playwright‑mcp/*.log
+.playwright‑mcp/
 
 # Environment
 .env
