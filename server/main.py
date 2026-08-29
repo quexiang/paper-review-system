@@ -16,12 +16,36 @@ from dotenv import load_dotenv
 from pathlib import Path
 # .env 在项目根目录，不是 server/ 下
 _env_path = Path(__file__).resolve().parent.parent / ".env"
-load_dotenv(dotenv_path=_env_path)  # 加载 .env 文件，使 OPENAI_API_KEY 等环境变量生效
-
-from fastapi import FastAPI, File, UploadFile, Form
+_loaded = load_dotenv(dotenv_path=_env_path)  # 加载 .env 文件
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from openai import AsyncOpenAI
+print(f"[Config] .env 文件: {_env_path}  加载={'成功' if _loaded else '失败'}", flush=True)
+
+# ── 管理员认证配置 ─────────────────────────────────────
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
+JWT_SECRET = os.getenv("JWT_SECRET", "")
+JWT_EXPIRE_HOURS = int(os.getenv("JWT_EXPIRE_HOURS", "72"))
+
+if not ADMIN_PASSWORD:
+    print("[Security] ⚠️  请设置环境变量 ADMIN_USERNAME 和 ADMIN_PASSWORD 后再启动服务", flush=True)
+    print("[Security] 例如: ADMIN_USERNAME=admin ADMIN_PASSWORD=your_strong_password", flush=True)
+if not JWT_SECRET:
+    print("[Security] ⚠️  JWT_SECRET 未设置，将使用默认值（生产环境强烈建议设置）", flush=True)
+    print("[Security] 设置: JWT_SECRET=<your-256-bit-secret>", flush=True)
+
+# 生成默认 JWT_SECRET
+if not JWT_SECRET:
+    import secrets
+    JWT_SECRET = secrets.token_hex(32)
+    print("[Security] 使用默认 JWT_SECRET（重启后失效）", flush=True)
+
+# 依赖注入
+security = HTTPBearer()
+
+from fastapi import FastAPI, File, UploadFile, Form, HTTPException, Depends, status, Body
 import pypdfium2 as pdfium
 
 from models import (
@@ -60,13 +84,21 @@ _KNOWN_MODELS: list[str] = [
 
 # 自定义模型端点（非默认 base_url 的模型）
 # API key 优先从环境变量 LAN_MODEL_API_KEY 读取
-_LAN_KEY = os.getenv("LAN_MODEL_API_KEY", "sk-litellmXa304304")
-_LAN_URL = "http://127.0.0.1:7000"
+_LAN_KEY = os.getenv("LAN_MODEL_API_KEY") or os.getenv("OPENAI_API_KEY") or "sk-litellmXa304304"
+# 优先使用 LAN_MODEL_URL，回退到 OPENAI_BASE_URL，都未设置则用默认
+_lan_url_raw = os.getenv("LAN_MODEL_URL") or os.getenv("OPENAI_BASE_URL") or "http://127.0.0.1:7000/v1"
+_lan_url_base = _lan_url_raw.rstrip("/")
+# 确保 URL 有 /v1 后缀（OpenAI 兼容 API 标准路径）
+if not _lan_url_base.endswith("/v1"):
+    _lan_url_base = _lan_url_base + "/v1"
+_LAN_URL = _lan_url_base
+_LAN_PROXY_ROOT = _LAN_URL.rsplit("/v1", 1)[0] if "/v1" in _LAN_URL else _LAN_URL
 _CUSTOM_ENDPOINTS: dict[str, tuple[str, str]] = {
     "claude-sonnet-4-5-20251001": (_LAN_URL, _LAN_KEY),
     "claude-opus-4-5-20251001":   (_LAN_URL, _LAN_KEY),
     "claude-haiku-4-5-20251001":  (_LAN_URL, _LAN_KEY),
 }
+print(f"[Config] 代理端点 URL={_LAN_URL}  根路径={_LAN_PROXY_ROOT}  API Key={_LAN_KEY[:8]}...", flush=True)
 
 def _discover_ollama_models() -> list[str]:
     """从 Ollama 发现可用模型，与已知模型列表合并"""
@@ -87,39 +119,30 @@ def _discover_ollama_models() -> list[str]:
 
 
 def _check_proxy_available(url: str, timeout: float = 3.0) -> bool:
-    """检查代理端点是否可访问（优先使用 OpenAI 兼容的 /v1/models 端点）"""
+    """检查代理端点是否可访问（优先使用 OpenAI 兼容的 /v1/models 端点）
+    url 形如 http://server:7000/v1，需分别构造各探测路径。"""
     import urllib.request
-    # 1. 尝试 /health
-    try:
-        req = urllib.request.Request(f"{url}/health", method="GET")
-        resp = urllib.request.urlopen(req, timeout=timeout)
-        return 200 <= resp.status < 400
-    except Exception:
-        pass
-    # 2. 尝试 /v1/health
-    try:
-        if not url.endswith("/v1"):
-            req = urllib.request.Request(f"{url}/v1/health", method="GET")
+    root = _LAN_PROXY_ROOT  # 不含 /v1 的根路径，如 http://server:7000
+    api_key = _LAN_KEY if _LAN_KEY else "test-key"
+
+    # 探测所有可能端点，返回第一个成功的
+    probes = [
+        (f"{root}/health", "GET", {}),
+        (f"{root}/v1/health", "GET", {}),
+        (f"{root}/v1/models", "GET", {"Authorization": f"Bearer {api_key}"}),
+        (root, "GET", {}),
+    ]
+    for probe_url, method, headers in probes:
+        try:
+            req = urllib.request.Request(probe_url, method=method)
+            for k, v in headers.items():
+                req.add_header(k, v)
             resp = urllib.request.urlopen(req, timeout=timeout)
-            return 200 <= resp.status < 400
-    except Exception:
-        pass
-    # 3. 尝试 /v1/models（OpenAI 兼容标准端点，需要 API key）
-    try:
-        api_key = _LAN_KEY if _LAN_KEY else "test-key"
-        req = urllib.request.Request(f"{url}/v1/models", method="GET")
-        req.add_header("Authorization", f"Bearer {api_key}")
-        resp = urllib.request.urlopen(req, timeout=timeout)
-        return 200 <= resp.status < 400
-    except Exception:
-        pass
-    # 4. 最后尝试根路径
-    try:
-        req = urllib.request.Request(url, method="GET")
-        resp = urllib.request.urlopen(req, timeout=timeout)
-        return 200 <= resp.status < 400
-    except Exception:
-        return False
+            print(f"[Models] 探测成功: {probe_url} → HTTP {resp.status}", flush=True)
+            return True
+        except Exception as e:
+            print(f"[Models] 探测失败: {probe_url} → {type(e).__name__}: {e}", flush=True)
+    return False
 
 
 def _get_available_models(force_refresh: bool = False) -> list[dict]:
@@ -154,6 +177,7 @@ def _get_available_models(force_refresh: bool = False) -> list[dict]:
         if model_name in seen:
             continue
         seen.add(model_name)
+        print(f"[Models] 正在探测代理 {endpoint} 上的模型 {model_name}...", flush=True)
         if _check_proxy_available(endpoint):
             result.append({"name": model_name, "desc": descriptions.get(model_name, f"模型 {model_name}")})
         else:
@@ -1364,6 +1388,54 @@ async def run_review(parsed: ParsedDocument, model_name: str | None = None, revi
     return report
 
 
+# ── 管理员认证 ──────────────────────────────────────
+
+from jose import jwt, JWTError
+import hashlib
+
+# 如果 _ADMIN_PASSWORD 不是 SHA256 哈希（长度不为64），则进行哈希
+if ADMIN_PASSWORD and len(ADMIN_PASSWORD) != 64:
+    ADMIN_PASSWORD = hashlib.sha256(ADMIN_PASSWORD.encode()).hexdigest()
+
+
+def _authenticate(username: str, password: str) -> bool:
+    """验证管理员用户名密码"""
+    import hashlib
+    password_hash = hashlib.sha256(password.encode()).hexdigest()
+    return username == ADMIN_USERNAME and password_hash == ADMIN_PASSWORD
+
+
+def _create_token(username: str) -> str:
+    """创建 JWT token"""
+    from datetime import datetime, timedelta
+    expire = datetime.now(timezone.utc) + timedelta(hours=JWT_EXPIRE_HOURS)
+    payload = {"sub": username, "exp": expire}
+    return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+
+def _verify_token(token: str) -> dict:
+    """验证 JWT token，返回 claims"""
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+        if payload.get("sub") and payload.get("exp"):
+            return payload
+    except JWTError:
+        pass
+    return {}
+
+
+def _get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict:
+    """从请求中获取当前登录的管理员"""
+    payload = _verify_token(credentials.credentials)
+    if not payload:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="无效的认证令牌",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return payload
+
+
 # ── FastAPI App ────────────────────────────────────────
 
 @asynccontextmanager
@@ -1394,6 +1466,17 @@ def root():
 @app.get("/api/health")
 def health():
     return {"status": "ok", "service": "paper-review-system"}
+
+
+@app.post("/api/login")
+def login(credentials: dict = Body(...)):
+    """管理员登录"""
+    username = credentials.get("username", "")
+    password = credentials.get("password", "")
+    if not _authenticate(username, password):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户名或密码错误")
+    token = _create_token(username)
+    return {"token": token, "username": username}
 
 
 @app.get("/api/models")
@@ -1437,14 +1520,26 @@ async def review(file: UploadFile = File(...), model: str | None = Form(default=
     return report.model_dump()
 
 
+def _require_auth(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict:
+    """依赖：检查 Bearer token 认证"""
+    payload = _verify_token(credentials.credentials)
+    if not payload:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="无效的认证令牌",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return payload
+
+
 @app.get("/api/history")
-def get_history():
+def get_history(user: dict = Depends(_require_auth)):
     records = sorted(_history, key=lambda r: r.timestamp, reverse=True)
     return [r.model_dump() for r in records]
 
 
 @app.delete("/api/history/{review_id}")
-def delete_history(review_id: str):
+def delete_history(review_id: str, user: dict = Depends(_require_auth)):
     global _history
     _history = [r for r in _history if r.id != review_id]
     _reports.pop(review_id, None)
